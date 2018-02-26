@@ -9,43 +9,59 @@ def run_linux(cmd):
                                 stderr=subprocess.PIPE
                                 ).communicate()
     return result, err
-                
+
+class Windows():
+    master_windows
+
+    def __init__(self):
+        self.term_lines = 0
+        self.term_columns = 0
+        self.heat = []
+        self.display_text = []
+
+
+    def run_window(self):
+
+
+        while true:
+
+
 
 def main(stdscr):
 
-    clear heat array
-    get term sizes
-    define history arry
-    new window, size to term sizes
+    #clear heat array
+    #get term sizes
+    #define history arry
+    #new window, size to term sizes
     
-    while True:
-        results = run linux command
-        clear screen
-
-        check terminal size
-            if not same
-                set new sizes
-                clear last result
-                clear heat array
-                resize window
-                
-        loop lines
-            loop columns
-                if now char != past char
-                    set hot
-                else if temp > 1
-                    set temp - 1
-
-            write char
-        refresh window
-        
-        save results to history array
-
-        get char input
-        user choices:
-            quit
-            pause(later)
-            unpause(later)
+    # while True:
+    #     results = run linux command
+    #     clear screen
+    #
+    #     check terminal size
+    #         if not same
+    #             set new sizes
+    #             clear last result
+    #             clear heat array
+    #             resize window
+    #
+    #     loop lines
+    #         loop columns
+    #             if now char != past char
+    #                 set hot
+    #             else if temp > 1
+    #                 set temp - 1
+    #
+    #         write char
+    #     refresh window
+    #
+    #     save results to history array
+    #
+    #     get char input
+    #     user choices:
+    #         quit
+    #         pause(later)
+    #         unpause(later)
         
 
 
