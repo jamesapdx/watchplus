@@ -4,36 +4,74 @@ import curses, sys, os, time, subprocess
 
 def run_linux(cmd):
     result, err = subprocess.Popen(
-                                cmd,
+                                cmd.split(" "),
                                 stdout=subprocess.PIPE,
                                 stderr=subprocess.PIPE
                                 ).communicate()
     return result, err
 
 class Windows():
-    master_windows
+    master_windows = []
 
-    def __init__(self):
-        self.term_lines = 0
-        self.term_columns = 0
-        self.heat = []
-        self.display_text = []
+    def __init__(self, cmd, current_time):
+        self.cmd = cmd
+        self.creation_time = current_time
+        self.frame_lines = []
+        self.frame_columns = []
+        self.frame_heatmap = []
+        self.frame = []
+        init_heatmap()
+        init_frame()
 
+    def create_frame(self):
+        self.frame.append(run_linux(self.cmd))
 
-    def run_window(self):
+    def init_heatmap(self):
+        lines = [curses.LINES]
+        columns = [curses.COLS]
+        self.frame_lines.append(lines)
+        self.frame_columns.append(columns)
 
+    def init_frame():
+        pass
+
+    def new_heatmap(self):
+        init_heatmap()
+        frame_count = len(self.frame_lines)
+        lines = [self.frame_lines[frame_count - 1], self.frame_lines[frame_count]]
+        columns = [self.frame_columns[frame_count - 1], self.frame_columns[frame_count]]
+
+    def display_frame(self):
+        window_time = creation_time
 
         while true:
 
+            columns = curses.COLS
+            frame, error = run_linux("date")
+            frame_lines = frame.splitlines()
+            frame = (frame.strip("\n") + ("adf" * 60) + "\n") * 60
+            stdscr.erase()
+            self.create_heatmap()
+
+            frame_lines = frame.splitlines()
+            for line in range(lines):
+                for column in range(columns - 1):
+                    if line <= len(frame_lines) - 1:
+                        if column <= len(frame_lines[line]) - 1:
+
+                            print_char = frame_lines[line][column]
+                            stdscr.addch(line,column,print_char)
+
+            stdscr.refresh()
 
 
 def main(stdscr):
 
-    #clear heat array
+    #clear frame_heatmap array
     #get term sizes
     #define history arry
     #new window, size to term sizes
-    
+
     # while True:
     #     results = run linux command
     #     clear screen
@@ -42,7 +80,7 @@ def main(stdscr):
     #         if not same
     #             set new sizes
     #             clear last result
-    #             clear heat array
+    #             clear frame_heatmap array
     #             resize window
     #
     #     loop lines
@@ -62,17 +100,28 @@ def main(stdscr):
     #         quit
     #         pause(later)
     #         unpause(later)
-        
 
 
-    term_lines, term_columns = 0,0
-    if term_lines, term_columns != curses.LINES, curses.COLS:
-        term_lines, term_columns = curses.LINES, curses.COLS
+    while True:
+        lines = curses.LINES
+        columns = curses.COLS
+        frame, error = run_linux("date")
+        frame = (frame.strip("\n") + ("adf" * 60) + "\n") * 60
+        stdscr.erase()
 
-    for line in range(term_lines - 1):
-        for column in range(term_columns - 1):
+        time.sleep(.02)
+       # stdscr.refresh()
 
+        frame_lines = frame.splitlines()
+        for line in range(lines):
+            for column in range(columns - 1):
+                if line <= len(frame_lines) - 1:
+                    if column <= len(frame_lines[line]) - 1:
 
+                        print_char = frame_lines[line][column]
+                        stdscr.addch(line,column,print_char)
+
+        stdscr.refresh()
 
 
 stdscr = curses.initscr()
