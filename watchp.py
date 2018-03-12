@@ -35,8 +35,8 @@ class Windows():
         new_position = len(self.frame)
         self.frame.append([])
         self.heatmap.append([])
-        result, error = run_linux("dmesg")
-        #result = (result.strip("\n") + ("adf" * 60) + str("\n")) * 60
+        result, error = run_linux("date")
+        result = (result.strip("\n") + ("adf" * 60) + str("\n")) * 600
 
         # make local variables for the current frame, heatmap, last frame, and last heatmap
         # save them to the actual class arrays (self.frame etc) at the end.  this is much easier to work with
@@ -60,23 +60,15 @@ class Windows():
 
         for line in range(max_lines):
 
-            # make all variables of the current line the same length for ease of processing
-            frame_line_length = len(frame[line])
-            last_frame_line_length = len(last_frame[line])
-            last_heatmap_line_length = len(last_heatmap[line])
-
-            max_char = max(frame_line_length, last_frame_line_length, last_heatmap_length)
-
-            frame_line = frame[line].rstrip("\n") + (" " * (max_char - frame_line_length + 0))
-            last_frame_line = last_frame[line] + (" " * (max_char - last_frame_line_length + 0))
-            last_heatmap_line = last_heatmap[line] + ("0" * (max_char - last_heatmap_line_length + 0))
-
+            frame_line = frame[line]
+            last_frame_line = last_frame[line]
 
             # if there is no change from the last iteration, just point to the last iteration
-
             if frame_line == last_frame_line or ignore is True:
+                last_heatmap_line = last_heatmap[line]
+
                 if ignore is True:
-                    self.frame[new_position].append(frame_line.rstrip(" "))
+                    self.frame[new_position].append(frame_line)
                 else:
                     # set the new frame equal to the last frame
                     self.frame[new_position].append(self.frame[new_position - 1][line])
@@ -87,6 +79,17 @@ class Windows():
                     for cooldown in range(self.cooldown_ticks + 1, 2, -1):
                         self.heatmap[new_position][line] = last_heatmap_line.replace(str(cooldown),str(cooldown - 1))
             else:
+                # make all variables of the current line the same length for ease of processing
+                frame_line_length = len(frame[line])
+                last_frame_line_length = len(last_frame[line])
+                last_heatmap_line_length = len(last_heatmap[line])
+
+                max_char = max(frame_line_length, last_frame_line_length, last_heatmap_length)
+
+                frame_line = frame[line].rstrip("\n") + (" " * (max_char - frame_line_length + 0))
+                last_frame_line = last_frame[line] + (" " * (max_char - last_frame_line_length + 0))
+                last_heatmap_line = last_heatmap[line] + ("0" * (max_char - last_heatmap_line_length + 0))
+
                 # something is different on this line, so go through char by char
                 heatmap_line = ""
                 for char in range(max_char):
@@ -184,11 +187,12 @@ def terminate_curses():
     curses.nocbreak()
     curses.curs_set(1)
     curses.endwin()
-    print("{0} iterations, start:{1:.3f} stop:{2:.3f} diff:{3:.3f})".format(
-        iterations,
-        start,
-        stop,
-        diff))
+    if error is False:
+        print("{0} iterations, start:{1:.3f} stop:{2:.3f} diff:{3:.3f})".format(
+            iterations,
+            start,
+            stop,
+            diff))
 
 stdscr = curses.initscr()
 curses.noecho()
@@ -201,9 +205,11 @@ try:
     x = Windows(stdscr, "date", 0)
 
     counter = 1
-    iterations = 30
+    iterations = 1000
+    error = False
     start = timeit.default_timer()
     for y in range(iterations):
+        ignore = True if y == 0 else False
         x.frame_generator()
 
     stop = timeit.default_timer()
@@ -211,6 +217,7 @@ try:
 
     #x.display_frame()
 except:
+    error = True
     terminate_curses()
     raise
 
