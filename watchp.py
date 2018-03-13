@@ -35,8 +35,9 @@ class Windows():
         new_position = len(self.frame)
         self.frame.append([])
         self.heatmap.append([])
-        result, error = run_linux("date")
-        result = (result.strip("\n") + ("adf" * 60) + str("\n")) * 600
+        result, error = run_linux("dmesg")
+        #result = (result.strip("\n") + ("adf" * 60) + str("\n")) * 600
+
 
         # make local variables for the current frame, heatmap, last frame, and last heatmap
         # save them to the actual class arrays (self.frame etc) at the end.  this is much easier to work with
@@ -45,9 +46,21 @@ class Windows():
         frame = result.splitlines()
         frame_length = len(frame)
         last_frame = self.frame[new_position - 1]
-        last_frame_length = len(last_frame)
         last_heatmap = self.heatmap[new_position - 1]
+
+        # if lenght > 200 then probably just a log, so if no change this is much faster
+        if frame_length > 200 and new_position > 1:
+            last_last_heatmap = self.heatmap[new_position - 2]
+            if frame == last_frame and last_heatmap == last_last_heatmap:
+                self.frame[new_position] = self.frame[new_position - 1]
+                self.heatmap[new_position] = self.heatmap[new_position - 1]
+                return
+
+
+        last_frame_length = len(last_frame)
         last_heatmap_length = len(last_heatmap)
+
+
 
         # make all lists the same length for ease of processing when comparing current with previous
         # preserve length variables to strip unnecessary lines at the end
@@ -56,6 +69,8 @@ class Windows():
         frame = frame + ([""] * (max_lines - frame_length))
         last_frame = last_frame + ([""] * (max_lines - last_frame_length))
         last_heatmap = last_heatmap + ([""] * (max_lines - last_heatmap_length))
+
+
 
 
         for line in range(max_lines):
@@ -68,6 +83,7 @@ class Windows():
                 last_heatmap_line = last_heatmap[line]
 
                 if ignore is True:
+                    # IGNORE NEEDS TO BE FIXED
                     self.frame[new_position].append(frame_line)
                 else:
                     # set the new frame equal to the last frame
@@ -205,7 +221,7 @@ try:
     x = Windows(stdscr, "date", 0)
 
     counter = 1
-    iterations = 1000
+    iterations = 100
     error = False
     start = timeit.default_timer()
     for y in range(iterations):
