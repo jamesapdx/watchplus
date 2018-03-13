@@ -35,8 +35,9 @@ class Windows():
         new_position = len(self.frame)
         self.frame.append([])
         self.heatmap.append([])
-        result, error = run_linux("dmesg")
-        #result = (result.strip("\n") + ("adf" * 60) + str("\n")) * 600
+        result, error = run_linux("date")
+        #result = str(timeit.default_timer())
+        result = (result.strip("\n") + ("adf" * 60) + str("\n")) * 600
 
 
         # make local variables for the current frame, heatmap, last frame, and last heatmap
@@ -48,8 +49,7 @@ class Windows():
         last_frame = self.frame[new_position - 1]
         last_heatmap = self.heatmap[new_position - 1]
 
-        # if lenght > 200 then probably just a log, so if no change this is much faster
-        if frame_length > 200 and new_position > 1:
+        if new_position > 1:
             last_last_heatmap = self.heatmap[new_position - 2]
             if frame == last_frame and last_heatmap == last_last_heatmap:
                 self.frame[new_position] = self.frame[new_position - 1]
@@ -61,7 +61,6 @@ class Windows():
         last_heatmap_length = len(last_heatmap)
 
 
-
         # make all lists the same length for ease of processing when comparing current with previous
         # preserve length variables to strip unnecessary lines at the end
         max_lines = max(last_heatmap_length, frame_length)
@@ -69,8 +68,6 @@ class Windows():
         frame = frame + ([""] * (max_lines - frame_length))
         last_frame = last_frame + ([""] * (max_lines - last_frame_length))
         last_heatmap = last_heatmap + ([""] * (max_lines - last_heatmap_length))
-
-
 
 
         for line in range(max_lines):
