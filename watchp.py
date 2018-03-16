@@ -25,20 +25,20 @@ class Windows():
         self.cooldown_ticks = 4
         self.history_min = 1
 
-        self.frame = [[" "]]
-        self.position = [1]
-        self.heatmap = [["0"]]
+        self.frame = [""]
+        self.frame_pointer = [1]
+        self.heatmap = [""]
+        self.heatmap_pointer = [1]
 
         self.v_position = 0
         self.h_postion = 0
 
     def frame_generator(self, ignore=False):
 
-        new_position = len(self.frame)
+        new_pointer = len(self.frame)
         self.frame.append([])
         self.heatmap.append([])
         result, error = run_linux("dmesg")
-        #result = "abcdefg"
         #result = str(timeit.default_timer())
         #result = (result.strip("\n") + ("adf" * 60) + str("\n")) * 600
 
@@ -49,36 +49,28 @@ class Windows():
         # heatmap is a list, each list item is a line of text containing the heatmap values
         frame = result.splitlines()
         frame_length = len(frame)
-        last_frame = self.frame[self.position[new_position - 1]]
-        last_heatmap = self.heatmap[self.position[new_position - 1]]
-        last_last_heatmap = self.heatmap[self.position[new_position - 2]]
-# fix heatmap here
-        if new_position == 1:
-            self.position.append(1)
-            frame = result.splitlines()
-            self.frame[new_position] = frame
-            for line in frame:
-                heatmap_line = ""
-                for char in line:
-                    heatmap_line = heatmap_line + "0"
-                self.heatmap[new_position].append(heatmap_line)
-        elif frame == last_frame and last_heatmap == last_last_heatmap:
-            self.position.append(new_position - 1)
+        last_frame =   self.frame[  self.frame_pointer[new_pointer - 1]]
+        last_heatmap = self.heatmap[self.heatmap_pointer[new_pointer - 1]]
+
+        if new_pointer == 1:
+            self.frame[new_pointer] = frame
+            self.frame_pointer.append(1)
+            self.heatmap_pointer.append(1)
+            for counter in range(len(frame)):
+                self.heatmap[new_pointer].append(len(frame[counter]) * "0")
+        elif frame == last_frame and self.heatmap_pointer[new_pointer - 1] == self.heatmap_pointer[new_pointer - 2]:
+            self.frame_pointer.append(self.frame_pointer[new_pointer - 1])
+            self.heatmap_pointer.append(self.heatmap_pointer[new_pointer -1])
         else:
-            self.position.append(new_position)
+            self.frame_pointer.append(new_pointer)
+            self.heatmap_pointer.append(new_pointer)
 
             last_frame_length = len(last_frame)
             last_heatmap_length = len(last_heatmap)
 
-
             # make all lists the same length for ease of processing when comparing current with previous
             # preserve length variables to strip unnecessary lines at the end
             max_lines = max(last_heatmap_length, frame_length)
-
-            frame = frame + ([""] * (max_lines - frame_length))
-            last_frame = last_frame + ([""] * (max_lines - last_frame_length))
-            last_heatmap = last_heatmap + ([""] * (max_lines - last_heatmap_length))
-
 
             for line in range(max_lines):
 
@@ -91,16 +83,16 @@ class Windows():
 
                     if ignore is True:
                         # IGNORE NEEDS TO BE FIXED
-                        self.frame[new_position].append(frame_line)
+                        self.frame[new_pointer].append(frame_line)
                     else:
                         # set the new frame equal to the last frame
-                        self.frame[new_position].append(self.frame[new_position - 1][line])
+                        self.frame[new_pointer].append(self.frame[new_pointer - 1][line])
                     # set heatmap to the last heatmap
-                    self.heatmap[new_position].append(self.heatmap[new_position - 1][line])
+                    self.heatmap[new_pointer].append(self.heatmap[new_pointer - 1][line])
                     if int(max(last_heatmap_line)) > 1:
                         # cooldown calculation needed, loop through levels and reduce by one
                         for cooldown in range(self.cooldown_ticks + 1, 2, -1):
-                            self.heatmap[new_position][line] = last_heatmap_line.replace(str(cooldown),str(cooldown - 1))
+                            self.heatmap[new_pointer][line] = last_heatmap_line.replace(str(cooldown),str(cooldown - 1))
                 else:
                     # make all variables of the current line the same length for ease of processing
                     frame_line_length = len(frame[line])
@@ -126,8 +118,8 @@ class Windows():
                             else:
                                 # heatmap char must be in cooldown, so subtract 1
                                 heatmap_line = heatmap_line + str(int(last_heatmap_line[char]) - 1)
-                    self.frame[new_position].append(frame_line.rstrip(" "))
-                    self.heatmap[new_position].append(heatmap_line.rstrip("0"))
+                    self.frame[new_pointer].append(frame_line.rstrip(" "))
+                    self.heatmap[new_pointer].append(heatmap_line.rstrip("0"))
         n = ""
 
 def terminate_curses():
@@ -153,7 +145,7 @@ try:
     x = Windows(stdscr, "date", 0)
 
     counter = 1
-    iterations = 1500
+    iterations = 2000
     error = False
     start = timeit.default_timer()
     for y in range(iterations):
