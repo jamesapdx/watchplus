@@ -27,39 +27,57 @@ class Windows():
 
         self.frame = [""]
         self.frame_pointer = [1]
+        self.frame_state = [0]
         self.heatmap = [""]
         self.heatmap_pointer = [1]
+        self.heatmap_state = [0]
 
         self.v_position = 0
         self.h_postion = 0
 
-    def frame_generator(self, ignore=False):
-
-        new_pointer = len(self.frame)
+    def frame_generator(self):
         self.frame.append([])
-        self.heatmap.append([])
+        self.frame_state.append(0)
+        new_pointer = len(self.frame) - 1
+
         result, error = run_linux("dmesg")
         #result = str(timeit.default_timer())
         #result = (result.strip("\n") + ("adf" * 60) + str("\n")) * 600
 
+        frame = result.splitlines()
+        last_frame =   self.frame[  self.frame_pointer[new_pointer - 1]]
+
+        if new_pointer == 1:
+            self.frame[new_pointer] = frame
+            self.frame_pointer.append(1)
+        elif frame == last_frame:
+            self.frame_pointer.append(self.frame_pointer[new_pointer - 1])
+            self.frame_state = 1
+
+        self.frame[new_pointer] = frame
+
+    def heatmap_generator(self, ignore=False):
+
+        new_pointer = len(self.frame) - 1
+        self.heatmap.append([])
 
         # make local variables for the current frame, heatmap, last frame, and last heatmap
         # save them to the actual class arrays (self.frame etc) at the end.  this is much easier to work with
         # frame is a list, each list item is a line of text to be displayed
         # heatmap is a list, each list item is a line of text containing the heatmap values
-        frame = result.splitlines()
+        frame = self.frame[new_pointer]
         frame_length = len(frame)
         last_frame =   self.frame[  self.frame_pointer[new_pointer - 1]]
         last_heatmap = self.heatmap[self.heatmap_pointer[new_pointer - 1]]
 
         if new_pointer == 1:
-            self.frame[new_pointer] = frame
-            self.frame_pointer.append(1)
             self.heatmap_pointer.append(1)
             for counter in range(len(frame)):
                 self.heatmap[new_pointer].append(len(frame[counter]) * "0")
-        elif frame == last_frame and self.heatmap_pointer[new_pointer - 1] == self.heatmap_pointer[new_pointer - 2]:
-            self.frame_pointer.append(self.frame_pointer[new_pointer - 1])
+        elif self.frame_state == 1 and self.heatmap_pointer[new_pointer - 1] == self.heatmap_pointer[new_pointer - 2]):
+            self.heatmap_pointer.append(self.heatmap_pointer[new_pointer -1])
+            ### stopped here
+        elif ignore is True:
             self.heatmap_pointer.append(self.heatmap_pointer[new_pointer -1])
         else:
             self.frame_pointer.append(new_pointer)
@@ -78,15 +96,10 @@ class Windows():
                 last_frame_line = last_frame[line]
 
                 # if there is no change from the last iteration, just point to the last iteration
-                if frame_line == last_frame_line or ignore is True:
+                if frame_line == last_frame_line:
                     last_heatmap_line = last_heatmap[line]
-
-                    if ignore is True:
-                        # IGNORE NEEDS TO BE FIXED
-                        self.frame[new_pointer].append(frame_line)
-                    else:
-                        # set the new frame equal to the last frame
-                        self.frame[new_pointer].append(self.frame[new_pointer - 1][line])
+                    # set the new frame equal to the last frame
+                    self.frame[new_pointer].append(self.frame[new_pointer - 1][line])
                     # set heatmap to the last heatmap
                     self.heatmap[new_pointer].append(self.heatmap[new_pointer - 1][line])
                     if int(max(last_heatmap_line)) > 1:
@@ -120,7 +133,6 @@ class Windows():
                                 heatmap_line = heatmap_line + str(int(last_heatmap_line[char]) - 1)
                     self.frame[new_pointer].append(frame_line.rstrip(" "))
                     self.heatmap[new_pointer].append(heatmap_line.rstrip("0"))
-        n = ""
 
 def terminate_curses():
     curses.echo()
