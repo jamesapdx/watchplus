@@ -27,10 +27,13 @@ class Windows():
 
         self.frame = [""]
         self.frame_pointer = [1]
+        # state: 0=no change, 1=change
         self.frame_state = [0]
         self.heatmap = [""]
         self.heatmap_pointer = [1]
+        # state: 0=no change, 1=change
         self.heatmap_state = [0]
+        self.heatmap_ignore = [0]
 
         self.v_position = 0
         self.h_postion = 0
@@ -41,98 +44,96 @@ class Windows():
         new_pointer = len(self.frame) - 1
 
         result, error = run_linux("dmesg")
-        #result = str(timeit.default_timer())
-        #result = (result.strip("\n") + ("adf" * 60) + str("\n")) * 600
+        #result = "abcdefg"
+        result = str(timeit.default_timer())
+        result = (result.strip("\n") + ("adf" * 60) + str("\n")) * 600
 
         frame = result.splitlines()
-        last_frame =   self.frame[  self.frame_pointer[new_pointer - 1]]
+        last_frame = self.frame[self.frame_pointer[new_pointer - 1]]
 
         if new_pointer == 1:
             self.frame[new_pointer] = frame
             self.frame_pointer.append(1)
+            self.frame_state[new_pointer] = 0
         elif frame == last_frame:
             self.frame_pointer.append(self.frame_pointer[new_pointer - 1])
-            self.frame_state = 1
+            self.frame_state[new_pointer] = 0
+        else:
+            self.frame[new_pointer] = frame
+            self.frame_pointer.append(new_pointer)
+            self.frame_state[new_pointer] = 1
 
-        self.frame[new_pointer] = frame
-
-    def heatmap_generator(self, ignore=False):
+    def heatmap_generator(self, ignore=None):
 
         new_pointer = len(self.frame) - 1
         self.heatmap.append([])
+        self.heatmap_state.append(0)
+        self.heatmap_ignore.append(0)
 
-        # make local variables for the current frame, heatmap, last frame, and last heatmap
-        # save them to the actual class arrays (self.frame etc) at the end.  this is much easier to work with
-        # frame is a list, each list item is a line of text to be displayed
-        # heatmap is a list, each list item is a line of text containing the heatmap values
         frame = self.frame[new_pointer]
-        frame_length = len(frame)
         last_frame =   self.frame[  self.frame_pointer[new_pointer - 1]]
         last_heatmap = self.heatmap[self.heatmap_pointer[new_pointer - 1]]
 
         if new_pointer == 1:
+            # first frame, so build a new heatmap of all 0s
             self.heatmap_pointer.append(1)
+            self.heatmap_state[new_pointer] = 0
             for counter in range(len(frame)):
                 self.heatmap[new_pointer].append(len(frame[counter]) * "0")
-        elif self.frame_state == 1 and self.heatmap_pointer[new_pointer - 1] == self.heatmap_pointer[new_pointer - 2]):
+        elif self.frame_state[new_pointer] == 0 and self.heatmap_state[new_pointer - 1] == 0:
+            # appears nothing has changed and no cooldown needed, so simply point to the prior heatmap
             self.heatmap_pointer.append(self.heatmap_pointer[new_pointer -1])
-            ### stopped here
+            self.heatmap_state[new_pointer] = 0
         elif ignore is True:
+            # set to ignore this frame, so point to the prior heatmap
             self.heatmap_pointer.append(self.heatmap_pointer[new_pointer -1])
+            self.heatmap_state[new_pointer] = 0
+            self.heatmap_ignore[new_pointer] = 0
         else:
-            self.frame_pointer.append(new_pointer)
+            # this frame is different than the last, so make a new heatmap just for the lines that are different
+            self.heatmap_state[new_pointer] = 1
             self.heatmap_pointer.append(new_pointer)
 
-            last_frame_length = len(last_frame)
-            last_heatmap_length = len(last_heatmap)
+            max_lines = max(len(last_heatmap), len(frame), len(last_frame))
 
-            # make all lists the same length for ease of processing when comparing current with previous
-            # preserve length variables to strip unnecessary lines at the end
-            max_lines = max(last_heatmap_length, frame_length)
+            # make all items the same length for ease of processing
+            frame = frame + ([""] * (max_lines - len(frame)))
+            last_frame = last_frame + ([""] * (max_lines - len(last_frame)))
+            last_heatmap = last_heatmap + ([""] * (max_lines - len(last_heatmap)))
 
+            # start line by line comparison
             for line in range(max_lines):
 
                 frame_line = frame[line]
                 last_frame_line = last_frame[line]
+                heatmap_line = last_heatmap[line]
+                last_heatmap_line = last_heatmap[line]
 
-                # if there is no change from the last iteration, just point to the last iteration
-                if frame_line == last_frame_line:
-                    last_heatmap_line = last_heatmap[line]
-                    # set the new frame equal to the last frame
-                    self.frame[new_pointer].append(self.frame[new_pointer - 1][line])
-                    # set heatmap to the last heatmap
-                    self.heatmap[new_pointer].append(self.heatmap[new_pointer - 1][line])
-                    if int(max(last_heatmap_line)) > 1:
-                        # cooldown calculation needed, loop through levels and reduce by one
-                        for cooldown in range(self.cooldown_ticks + 1, 2, -1):
-                            self.heatmap[new_pointer][line] = last_heatmap_line.replace(str(cooldown),str(cooldown - 1))
-                else:
+                # if this line is different, do a char by char comparison
+                if frame_line != last_frame_line:
+                    max_char = max(len(frame_line), len(last_frame_line), len(last_heatmap_line))
+
                     # make all variables of the current line the same length for ease of processing
-                    frame_line_length = len(frame[line])
-                    last_frame_line_length = len(last_frame[line])
-                    last_heatmap_line_length = len(last_heatmap[line])
+                    frame_line = frame_line + (" " * (max_char - len(frame_line)))
+                    last_frame_line = last_frame_line + (" " * (max_char - len(last_frame_line)))
+                    heatmap_line = heatmap_line + ("0" * (max_char - len(last_heatmap_line)))
 
-                    max_char = max(frame_line_length, last_frame_line_length, last_heatmap_length)
-
-                    frame_line = frame[line].rstrip("\n") + (" " * (max_char - frame_line_length + 0))
-                    last_frame_line = last_frame[line] + (" " * (max_char - last_frame_line_length + 0))
-                    last_heatmap_line = last_heatmap[line] + ("0" * (max_char - last_heatmap_line_length + 0))
-
-                    # something is different on this line, so go through char by char
+                    # perform a char by char comparison and mark hot if different
                     heatmap_line = ""
-                    for char in range(max_char):
-                        if frame_line[char] != last_frame_line[char]:
-                            # this char is different than last time, set heatmap char to max cooldown
-                            heatmap_line = heatmap_line + str(self.cooldown_ticks + 1)
+                    for counter in range(max_char):
+                        if frame_line[counter] != last_frame_line[counter]:
+                            heatmap_line = heatmap_line + str(self.cooldown_ticks + 2)
                         else:
-                            if int(last_heatmap_line[char]) == 0 or int(last_heatmap_line[char]) == 1 :
-                                # if heatmap char is 0 or 1 no change needed, just add
-                                heatmap_line = heatmap_line + last_heatmap_line[char]
-                            else:
-                                # heatmap char must be in cooldown, so subtract 1
-                                heatmap_line = heatmap_line + str(int(last_heatmap_line[char]) - 1)
-                    self.frame[new_pointer].append(frame_line.rstrip(" "))
-                    self.heatmap[new_pointer].append(heatmap_line.rstrip("0"))
+                            heatmap_line = heatmap_line + last_heatmap_line[counter]
+
+                # cooldown any heatmap char that is greater than 1
+                if int(max(heatmap_line)) > 1:
+                    for cooldown in range(2, self.cooldown_ticks + 3, 1):
+                        heatmap_line = heatmap_line.replace(str(cooldown),str(cooldown - 1))
+
+                # write the new heatmap for this frame
+                self.heatmap[new_pointer].append(heatmap_line)
+        n = ""
 
 def terminate_curses():
     curses.echo()
@@ -157,12 +158,13 @@ try:
     x = Windows(stdscr, "date", 0)
 
     counter = 1
-    iterations = 2000
+    iterations = 30
     error = False
     start = timeit.default_timer()
     for y in range(iterations):
         ignore = True if y == 0 else False
         x.frame_generator()
+        x.heatmap_generator()
 
     stop = timeit.default_timer()
     diff = start - stop
