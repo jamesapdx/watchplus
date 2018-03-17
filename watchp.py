@@ -64,35 +64,31 @@ class Windows():
             self.frame_state[new_pointer] = 1
 
     def heatmap_generator(self, ignore=None):
-
         new_pointer = len(self.frame) - 1
         self.heatmap.append([])
         self.heatmap_state.append(0)
         self.heatmap_ignore.append(0)
 
         frame = self.frame[new_pointer]
-        last_frame =   self.frame[  self.frame_pointer[new_pointer - 1]]
-        last_heatmap = self.heatmap[self.heatmap_pointer[new_pointer - 1]]
 
         if new_pointer == 1:
             # first frame, so build a new heatmap of all 0s
             self.heatmap_pointer.append(1)
-            self.heatmap_state[new_pointer] = 0
             for counter in range(len(frame)):
                 self.heatmap[new_pointer].append(len(frame[counter]) * "0")
         elif self.frame_state[new_pointer] == 0 and self.heatmap_state[new_pointer - 1] == 0:
             # appears nothing has changed and no cooldown needed, so simply point to the prior heatmap
             self.heatmap_pointer.append(self.heatmap_pointer[new_pointer -1])
-            self.heatmap_state[new_pointer] = 0
         elif ignore is True:
             # set to ignore this frame, so point to the prior heatmap
-            self.heatmap_pointer.append(self.heatmap_pointer[new_pointer -1])
-            self.heatmap_state[new_pointer] = 0
             self.heatmap_ignore[new_pointer] = 0
+            self.heatmap_pointer.append(self.heatmap_pointer[new_pointer -1])
         else:
             # this frame is different than the last, so make a new heatmap just for the lines that are different
-            self.heatmap_state[new_pointer] = 1
             self.heatmap_pointer.append(new_pointer)
+
+            last_frame =   self.frame[  self.frame_pointer[new_pointer - 1]]
+            last_heatmap = self.heatmap[self.heatmap_pointer[new_pointer - 1]]
 
             max_lines = max(len(last_heatmap), len(frame), len(last_frame))
 
@@ -128,6 +124,7 @@ class Windows():
 
                 # cooldown any heatmap char that is greater than 1
                 if int(max(heatmap_line)) > 1:
+                    self.heatmap_state[new_pointer] = 1
                     for cooldown in range(2, self.cooldown_ticks + 3, 1):
                         heatmap_line = heatmap_line.replace(str(cooldown),str(cooldown - 1))
 
@@ -158,7 +155,7 @@ try:
     x = Windows(stdscr, "date", 0)
 
     counter = 1
-    iterations = 30
+    iterations = 300
     error = False
     start = timeit.default_timer()
     for y in range(iterations):
