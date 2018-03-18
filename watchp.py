@@ -45,7 +45,7 @@ class Windows():
         self.frame.append([])
         self.frame_state.append(0)
         new_pointer = len(self.frame) - 1
-        test_case = None
+        test_case = 1
 
         # process desired command for this window
         result, error = run_linux("dmesg")
@@ -114,6 +114,7 @@ class Windows():
             l_frame = len(frame)
             l_last_frame = len(last_frame)
             l_last_heatmap = len(last_heatmap)
+            # get max length of this frame, last frame, last heatmap
             max_lines = max(l_last_heatmap, l_frame, l_last_frame)
 
             # make all items the same length (longest of all) for ease of processing
@@ -137,6 +138,7 @@ class Windows():
 
                 # if this line is different, do a char by char comparison
                 if frame_line != last_frame_line:
+                    # get max length of this fame line, last frame line, last heatmap_line
                     max_char = max(l_frame_line, l_last_frame_line, l_last_heatmap_line)
 
                     # make everything the same length for ease of processing
@@ -146,11 +148,11 @@ class Windows():
 
                     # perform a char by char comparison to the last frame and mark hot if different
                     heatmap_line = ""
-                    for counter in range(max_char):
-                        if frame_line[counter] != last_frame_line[counter]:
+                    for column in range(max_char):
+                        if frame_line[column] != last_frame_line[column]:
                             heatmap_line = heatmap_line + str(self.cooldown_ticks + 2)
                         else:
-                            heatmap_line += last_heatmap_line[counter]
+                            heatmap_line += last_heatmap_line[column]
 
                 # cooldown by 1 any heatmap char that is greater than 1
                 if int(max(heatmap_line)) > 1:
@@ -161,30 +163,38 @@ class Windows():
                 # save the new heatmap for this frame to the main heatmap list
                 self.heatmap[new_pointer].append(heatmap_line)
 
-        def frame_draw(self, pointer=None):
-            if pointer == None:
-                new_pointer = len(self.frame) - 1
-
-            # set variables
-            frame = self.frame[self.frame_pointer[new_pointer]]
-            heatmap = self.heatmap[self.heatmap_pointer[new_pointer]]
-            l_frame = len(frame)
-            l_heatmap = len(heatmap)
-
-            max_lines = max(l_heatmap, l_frame)
+    def draw_frame(self, refresh=None, pointer=None):
+        # need draw size, upper left position, last window type
+        # extra features: draw receding lines
 
 
-            for counter in range(max_lines):
-                frame_line = frame[line].rstrip(" ")
+        self.window.clear()
 
-                if
-                    heatmap_line = last_heatmap[line].rstrip("0")
-                    l_frame_line = len(frame_line)
-                    l_heatmap_line = len(last_heatmap_line)
+        if pointer == None:
+            new_pointer = len(self.frame) - 1
 
-                    max_char = max(l_frame_line, l_heatmap_line)
+        frame = self.frame[self.frame_pointer[new_pointer]]
+        heatmap = self.heatmap[self.heatmap_pointer[new_pointer]]
+        l_frame = len(frame)
+        l_heatmap = len(heatmap)
 
-                for
+        max_lines = max(l_heatmap, l_frame)
+
+        for line in range(max_lines):
+            frame_line = frame[line]
+            heatmap_line = heatmap[line]
+            l_frame_line = len(frame_line)
+            l_heatmap_line = len(heatmap_line)
+
+            max_char = max(l_frame_line, l_heatmap_line)
+
+            for column in range(max_char):
+                self.window.addch(line, column, frame_line[column])
+
+        self.window.refresh
+
+        time.sleep(.3)
+
 
 
 def terminate_curses():
@@ -210,13 +220,14 @@ try:
     x = Windows(stdscr, "date", 0)
 
     counter = 1
-    iterations = 1500
+    iterations = 10
     error = False
     start = timeit.default_timer()
     for y in range(iterations):
         ignore = True if y == 0 else False
         x.frame_generator()
         x.heatmap_generator()
+        x.draw_frame()
 
     stop = timeit.default_timer()
     diff = start - stop
