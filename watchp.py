@@ -45,7 +45,7 @@ class Windows():
         self.frame.append([])
         self.frame_state.append(0)
         new_pointer = len(self.frame) - 1
-        test_case = 1
+        test_case = 0
 
         # process desired command for this window
         result, error = run_linux("dmesg")
@@ -171,10 +171,10 @@ class Windows():
         self.window.clear()
 
         if pointer == None:
-            new_pointer = len(self.frame) - 1
+            pointer = len(self.frame) - 1
 
-        frame = self.frame[self.frame_pointer[new_pointer]]
-        heatmap = self.heatmap[self.heatmap_pointer[new_pointer]]
+        frame = self.frame[self.frame_pointer[pointer]]
+        heatmap = self.heatmap[self.heatmap_pointer[pointer]]
         l_frame = len(frame)
         l_heatmap = len(heatmap)
 
@@ -189,11 +189,11 @@ class Windows():
             max_char = max(l_frame_line, l_heatmap_line)
 
             for column in range(max_char):
-                self.window.addch(line, column, frame_line[column])
+                self.window.addch(line + 1, column + 1, frame_line[column])
 
-        self.window.refresh
+        self.window.refresh()
 
-        time.sleep(.3)
+        time.sleep(.1)
 
 
 
@@ -208,6 +208,7 @@ def terminate_curses():
             start,
             stop,
             diff))
+        print(stdscr)
 
 stdscr = curses.initscr()
 curses.noecho()
@@ -216,11 +217,13 @@ curses.curs_set(0)
 curses.start_color()
 stdscr.keypad(True)
 
+
 try:
     x = Windows(stdscr, "date", 0)
 
+
     counter = 1
-    iterations = 10
+    iterations = 1500
     error = False
     start = timeit.default_timer()
     for y in range(iterations):
