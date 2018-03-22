@@ -1,4 +1,5 @@
 #!/usr/bin/python
+# -*- encoding: utf8 -*-
 
 import curses, sys, os, time, subprocess
 import timeit
@@ -10,7 +11,8 @@ def run_linux(cmd):
                                 stdout=subprocess.PIPE,
                                 stderr=subprocess.PIPE
                                 ).communicate()
-    return result.decode("utf-8"), err
+    return result, err
+    #return result.decode("utf-8"), err
 
 class Windows():
     master_windows = []
@@ -45,14 +47,15 @@ class Windows():
         self.frame.append([])
         self.frame_state.append(0)
         new_pointer = len(self.frame) - 1
-        test_case = 0
+        test_case = 1
 
         # process desired command for this window
         result, error = run_linux("dmesg")
 
         # alternate test cases:
         if test_case == 1:
-            result = "abcdefgxyz abc 1234567890 !@#$&^"
+            result = "abcdefgxyz abc \n123456\n7890 !@#$&^"
+
         if test_case == 2:
             result = str(timeit.default_timer())
         if test_case == 3:
@@ -76,6 +79,7 @@ class Windows():
             self.frame[new_pointer] = frame
             self.frame_pointer.append(new_pointer)
             self.frame_state[new_pointer] = 1
+        n = ""
 
     def heatmap_generator(self, ignore=None):
         """ create a new heatmap frame. a heatmap frame is composed of a line by line list of digits indicating the
@@ -90,15 +94,18 @@ class Windows():
         self.heatmap_state.append(0)
         self.heatmap_ignore.append(0)
 
-        frame = self.frame[self.frame_pointer[new_pointer]]
-        last_frame = self.frame[self.frame_pointer[new_pointer - 1]]
-        last_heatmap = self.heatmap[self.heatmap_pointer[new_pointer - 1]]
+        frame = ['','']
+        heatmap = ['','']
+
+        frame[0] = self.frame[self.frame_pointer[new_pointer]]
+        frame[-1] = self.frame[self.frame_pointer[new_pointer - 1]]
+        heatmap[-1] = self.heatmap[self.heatmap_pointer[new_pointer - 1]]
 
         if new_pointer == 1:
             # first frame, so build a new heatmap of all 0s
             self.heatmap_pointer.append(1)
-            for counter in range(len(frame)):
-                self.heatmap[new_pointer].append(len(frame[counter]) * "0")
+            for counter in range(len(frame[0])):
+                self.heatmap[new_pointer].append(len(frame[0][counter]) * "0")
         elif self.frame_state[new_pointer] == 0 and self.heatmap_state[new_pointer - 1] == 0:
             # appears nothing has changed and no cooldown needed, so simply point to the prior heatmap
             self.heatmap_pointer.append(self.heatmap_pointer[new_pointer -1])
@@ -110,65 +117,48 @@ class Windows():
             # this frame is different than the last, so make a new heatmap just for the lines that are different
             self.heatmap_pointer.append(new_pointer)
 
-            # set lengths of variables
-            l_frame = len(frame)
-            l_last_frame = len(last_frame)
-            l_last_heatmap = len(last_heatmap)
-            # get max length of this frame, last frame, last heatmap
-            max_lines = max(l_last_heatmap, l_frame, l_last_frame)
-
-            # make all items the same length (longest of all) for ease of processing
-            frame = frame + ([""] * (max_lines - l_frame))
-            last_frame = last_frame + ([""] * (max_lines - l_last_frame))
-            last_heatmap = last_heatmap + ([""] * (max_lines - l_last_heatmap))
+            frame[0], frame[-1], heatmap[-1], max_lines = self.equalize_lengths(
+                            [""], frame[0], frame[-1], heatmap[-1])
 
             # start line by line comparison
             for line in range(max_lines):
 
-                # set variables
-                frame_line = frame[line]
-                last_frame_line = last_frame[line]
-                heatmap_line = last_heatmap[line]
-                last_heatmap_line = last_heatmap[line]
-
-                # set lengths of variables
-                l_frame_line = len(frame_line)
-                l_last_frame_line = len(last_frame_line)
-                l_last_heatmap_line = len(last_heatmap_line)
-
                 # if this line is different, do a char by char comparison
-                if frame_line != last_frame_line:
+                if frame[0][line] != frame[-1][line]:
                     # get max length of this fame line, last frame line, last heatmap_line
-                    max_char = max(l_frame_line, l_last_frame_line, l_last_heatmap_line)
-
-                    # make everything the same length for ease of processing
-                    frame_line = frame_line + (" " * (max_char - len(frame_line)))
-                    last_frame_line = last_frame_line + (" " * (max_char - len(last_frame_line)))
-                    heatmap_line = heatmap_line + ("0" * (max_char - len(last_heatmap_line)))
+                    frame[0][line], frame[-1][line], heatmap[-1][line], max_char = self.equalize_lengths(
+                                " ", frame[0][line], frame[-1][line], heatmap[-1][line])
+                    heatmap[-1][line] = heatmap[-1][line].replace(" ","0")
 
                     # perform a char by char comparison to the last frame and mark hot if different
-                    heatmap_line = ""
+                    heatmap[line] = ""
                     for column in range(max_char):
-                        if frame_line[column] != last_frame_line[column]:
-                            heatmap_line = heatmap_line + str(self.cooldown_ticks + 2)
+                        if frame[0][line][column] != frame[-1][line][column]:
+                            heatmap[line] = heatmap[line] + str(self.cooldown_ticks + 2)
                         else:
-                            heatmap_line += last_heatmap_line[column]
+                            heatmap[line] += heatmap[-1][line][column]
 
                 # cooldown by 1 any heatmap char that is greater than 1
-                if int(max(heatmap_line)) > 1:
+                if int(max(heatmap[line])) > 1:
                     self.heatmap_state[new_pointer] = 1
                     for cooldown in range(2, self.cooldown_ticks + 3, 1):
-                        heatmap_line = heatmap_line.replace(str(cooldown),str(cooldown - 1))
+                        heatmap[line] = heatmap[line].replace(str(cooldown),str(cooldown - 1))
 
                 # save the new heatmap for this frame to the main heatmap list
-                self.heatmap[new_pointer].append(heatmap_line)
+                self.heatmap[new_pointer].append(heatmap[line])
 
-    def draw_frame(self, refresh=None, pointer=None):
+    def equalize_lengths(self, adder, *args):
+        lengths = [len(value) for value in args]
+        max_length = max(lengths)
+        values = [value + (adder * (max_length - length)) for length, value in zip(lengths, args) ]
+        values.append(max_length)
+        return values
+
+    def draw_frame(self, height, width, refresh=None, pointer=None):
         # need draw size, upper left position, last window type
         # extra features: draw receding lines
 
-
-        self.window.clear()
+        self.window.erase()
 
         if pointer == None:
             pointer = len(self.frame) - 1
@@ -179,21 +169,24 @@ class Windows():
         l_heatmap = len(heatmap)
 
         max_lines = max(l_heatmap, l_frame)
+        draw_height = min(max_lines, height)
 
-        for line in range(max_lines):
-            frame_line = frame[line]
-            heatmap_line = heatmap[line]
+        for row in range(draw_height - 1):
+            frame_line = frame[row]
+            heatmap_line = heatmap[row]
             l_frame_line = len(frame_line)
             l_heatmap_line = len(heatmap_line)
 
             max_char = max(l_frame_line, l_heatmap_line)
+            draw_width = min(max_char, width)
 
-            for column in range(max_char):
-                self.window.addch(line + 1, column + 1, frame_line[column])
+            for column in range(draw_width - 1):
+                a = frame_line[column]
+                self.window.addch(row, column, a )
 
         self.window.refresh()
 
-        time.sleep(.1)
+        #time.sleep(.1)
 
 
 
@@ -221,7 +214,6 @@ stdscr.keypad(True)
 try:
     x = Windows(stdscr, "date", 0)
 
-
     counter = 1
     iterations = 1500
     error = False
@@ -230,7 +222,8 @@ try:
         ignore = True if y == 0 else False
         x.frame_generator()
         x.heatmap_generator()
-        x.draw_frame()
+        height, width = stdscr.getmaxyx()
+        x.draw_frame(height, width)
 
     stop = timeit.default_timer()
     diff = start - stop
