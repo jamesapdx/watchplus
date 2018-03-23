@@ -44,42 +44,38 @@ class Windows():
         """ create a new frame. a frame is composed of a line by line list of the output from
             the assigned command for this window """
         # init variables and add new list items
-        self.frame.append([])
-        self.frame_state.append(0)
-        new_pointer = len(self.frame) - 1
-        test_case = 1
+        new_pointer = len(self.frame)
 
         # process desired command for this window
         result, error = run_linux("dmesg")
 
         # alternate test cases:
+        test_case = 1
         if test_case == 1:
             result = "abcdefgxyz abc \n123456\n7890 !@#$&^"
-
         if test_case == 2:
             result = str(timeit.default_timer())
         if test_case == 3:
             result = str(timeit.default_timer())
             result = (result.strip("\n") + ("adf" * 60) + str("\n")) * 600
-        # break it into a line by line list
+
+        # break result into a line by line list
         frame = result.splitlines()
-        last_frame = self.frame[self.frame_pointer[new_pointer - 1]]
 
         if new_pointer == 1:
-            # first time run, store it in the main list
-            self.frame[new_pointer] = frame
-            self.frame_pointer.append(1)
-            self.frame_state[new_pointer] = 0
-        elif frame == last_frame:
+            # first time run, store it
+            self.set_frame(frame=frame, pointer=1, state=0)
+        elif frame == self.frame[self.frame_pointer[new_pointer - 1]]:
             # no change from last one, set the pointer to the last frame
-            self.frame_pointer.append(self.frame_pointer[new_pointer - 1])
-            self.frame_state[new_pointer] = 0
+            self.set_frame(frame=[], pointer=self.frame_pointer[new_pointer - 1], state=0)
         else:
-            # frame is different then the last one, store it in the main list
-            self.frame[new_pointer] = frame
-            self.frame_pointer.append(new_pointer)
-            self.frame_state[new_pointer] = 1
-        n = ""
+            # frame is different then the last one, store it
+            self.set_frame(frame=frame, pointer=new_pointer, state=1)
+
+    def set_frame(self, frame, pointer, state):
+        self.frame.append(frame)
+        self.frame_pointer.append(pointer)
+        self.frame_state.append(state)
 
     def heatmap_generator(self, ignore=None):
         """ create a new heatmap frame. a heatmap frame is composed of a line by line list of digits indicating the
