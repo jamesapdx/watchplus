@@ -55,7 +55,7 @@ class Windows():
         # process desired command for this window
 
         # alternate test cases:
-        test_case = 2
+        test_case = 4
         if test_case == 1:
             result = "abcdefgxyz abc \n123456\n7890 !@#$&^"
         elif test_case == 2:
@@ -64,6 +64,8 @@ class Windows():
         elif test_case == 3:
             result = str(timeit.default_timer())
             result = (result.strip("\n") + ("adf" * 60) + str("\n")) * 600
+        elif test_case == 4:
+            result, error = run_linux("date")
         else:
             result, error = run_linux("dmesg")
 
@@ -228,15 +230,21 @@ try:
     x = Windows(stdscr, "date", 0)
 
     counter = 1
-    iterations = 1500
+    iterations = 30
     error = False
     start = timeit.default_timer()
     for y in range(iterations):
         ignore = True if y == 0 else False
+        istart = timeit.default_timer()
         x.frame_generator()
         x.heatmap_generator()
         height, width = stdscr.getmaxyx()
         x.draw_frame(height, width)
+        iend = timeit.default_timer()
+        ipause = (1 - (iend - istart) - .001 )
+        ipause = 0 if ipause < 0 else ipause
+        time.sleep(ipause)
+
 
     stop = timeit.default_timer()
     diff = start - stop
