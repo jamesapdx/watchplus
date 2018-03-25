@@ -1,4 +1,4 @@
-#!/usr/bin/python
+#!/usr/bin/python3
 # -*- encoding: utf8 -*-
 
 import curses, sys, os, time, subprocess
@@ -24,7 +24,9 @@ class Windows():
         self.window_lines = []
         self.window_columns = []
         self.ticks_per_iter = 1
-        self.cooldown_ticks = 4
+        self.cooldown_ticks = None
+        self.cooldown_color_map = []
+        self.cooldown_color_setup(4)
 
         self.frame = [""]
         # use a pointer to point back to frames that are equal, prevents storage increase
@@ -40,6 +42,10 @@ class Windows():
         self.v_position = 0
         self.h_postion = 0
 
+    def cooldown_color_setup(self, cooldown_ticks=4):
+        self.cooldown_ticks = cooldown_ticks
+        self.cooldown_color_map = [0,1] + ([2] * (cooldown_ticks + 1))
+
     def frame_generator(self, test_case=None):
         """ create a new frame. a frame is composed of a line by line list of the output from
             the assigned command for this window """
@@ -47,20 +53,25 @@ class Windows():
         new_pointer = len(self.frame)
 
         # process desired command for this window
-        result, error = run_linux("dmesg")
 
         # alternate test cases:
-        test_case = 1
+        test_case = 2
         if test_case == 1:
             result = "abcdefgxyz abc \n123456\n7890 !@#$&^"
-        if test_case == 2:
+        elif test_case == 2:
             result = str(timeit.default_timer())
-        if test_case == 3:
+            time.sleep(.2)
+        elif test_case == 3:
             result = str(timeit.default_timer())
             result = (result.strip("\n") + ("adf" * 60) + str("\n")) * 600
+        else:
+            result, error = run_linux("dmesg")
 
         # break result into a line by line list
-        frame = result.splitlines()
+        try:
+            frame = result.decode().splitlines()
+        except AttributeError:
+            frame = str(result).splitlines()
 
         if new_pointer == 1:
             # first time run, store it
@@ -96,6 +107,7 @@ class Windows():
         frame[0] = self.frame[self.frame_pointer[new_pointer]]
         frame[-1] = self.frame[self.frame_pointer[new_pointer - 1]]
         heatmap[-1] = self.heatmap[self.heatmap_pointer[new_pointer - 1]]
+        heatmap[0] = heatmap[-1]
 
         if new_pointer == 1:
             # first frame, so build a new heatmap of all 0s
@@ -124,24 +136,26 @@ class Windows():
                     # get max length of this fame line, last frame line, last heatmap_line
                     frame[0][line], frame[-1][line], heatmap[-1][line], max_char = self.equalize_lengths(
                                 " ", frame[0][line], frame[-1][line], heatmap[-1][line])
-                    heatmap[-1][line] = heatmap[-1][line].replace(" ","0")
+                    #heatmap[-1][line] = heatmap[-1][line].replace(" ","0")
 
                     # perform a char by char comparison to the last frame and mark hot if different
-                    heatmap[line] = ""
+                    heatmap[0][line] = ""
                     for column in range(max_char):
                         if frame[0][line][column] != frame[-1][line][column]:
-                            heatmap[line] = heatmap[line] + str(self.cooldown_ticks + 2)
+                            # char is different, mark hot
+                            heatmap[0][line] += str(self.cooldown_ticks + 2)
                         else:
-                            heatmap[line] += heatmap[-1][line][column]
+                            # char is same
+                            heatmap[0][line] += heatmap[-1][line][column]
 
                 # cooldown by 1 any heatmap char that is greater than 1
-                if int(max(heatmap[line])) > 1:
+                if int(max(heatmap[0][line])) > 1:
                     self.heatmap_state[new_pointer] = 1
                     for cooldown in range(2, self.cooldown_ticks + 3, 1):
-                        heatmap[line] = heatmap[line].replace(str(cooldown),str(cooldown - 1))
+                        heatmap[0][line] = heatmap[0][line].replace(str(cooldown),str(cooldown - 1))
 
                 # save the new heatmap for this frame to the main heatmap list
-                self.heatmap[new_pointer].append(heatmap[line])
+                self.heatmap[new_pointer].append(heatmap[0][line])
 
     def equalize_lengths(self, adder, *args):
         lengths = [len(value) for value in args]
@@ -154,37 +168,38 @@ class Windows():
         # need draw size, upper left position, last window type
         # extra features: draw receding lines
 
-        self.window.erase()
+        self.window.clear()
 
         if pointer == None:
             pointer = len(self.frame) - 1
 
         frame = self.frame[self.frame_pointer[pointer]]
         heatmap = self.heatmap[self.heatmap_pointer[pointer]]
-        l_frame = len(frame)
-        l_heatmap = len(heatmap)
+        draw_height = min(len(frame), height - 1)
 
-        max_lines = max(l_heatmap, l_frame)
-        draw_height = min(max_lines, height)
+        for line in range(draw_height):
+            frame[line], heatmap[line], max_char = self.equalize_lengths(" ", frame[line], heatmap[line])
+            heatmap[line] = heatmap[line].replace(" ","0")
 
-        for row in range(draw_height - 1):
-            frame_line = frame[row]
-            heatmap_line = heatmap[row]
-            l_frame_line = len(frame_line)
-            l_heatmap_line = len(heatmap_line)
-
-            max_char = max(l_frame_line, l_heatmap_line)
             draw_width = min(max_char, width)
 
-            for column in range(draw_width - 1):
-                a = frame_line[column]
-                self.window.addch(row, column, a )
+            for column in range(draw_width):
+                self.window.addstr(
+                        line,
+                        column,
+                        str(frame[line][column]),
+                        curses.color_pair(self.cooldown_color_map[int("0" + heatmap[line][column])])
+                        )
 
         self.window.refresh()
+        n=""
 
         #time.sleep(.1)
 
 
+def curses_color_setup():
+    curses.init_pair(1, curses.COLOR_BLACK, curses.COLOR_YELLOW)
+    curses.init_pair(2, curses.COLOR_BLACK, curses.COLOR_RED)
 
 def terminate_curses():
     curses.echo()
@@ -203,8 +218,10 @@ stdscr = curses.initscr()
 curses.noecho()
 curses.cbreak()
 curses.curs_set(0)
-curses.start_color()
 stdscr.keypad(True)
+
+curses.start_color()
+curses_color_setup()
 
 
 try:
@@ -224,7 +241,6 @@ try:
     stop = timeit.default_timer()
     diff = start - stop
 
-    #x.display_frame()
 except:
     error = True
     terminate_curses()
