@@ -1,18 +1,22 @@
 #!/usr/bin/python3
 # -*- encoding: utf8 -*-
 
-import curses, sys, os, time, subprocess
+import sys
+import os
+import subprocess
+import curses
+import time
+import multiprocessing
+
 import timeit
-import gc
 
 def run_linux(cmd):
-    result, err = subprocess.Popen(
+    result, error = subprocess.Popen(
                                 cmd.split(" "),
                                 stdout=subprocess.PIPE,
                                 stderr=subprocess.PIPE
                                 ).communicate()
-    return result, err
-    #return result.decode("utf-8"), err
+    return result, error
 
 class Windows():
     master_windows = []
@@ -55,7 +59,7 @@ class Windows():
         # process desired command for this window
 
         # alternate test cases:
-        test_case = 4
+        test_case = 5
         if test_case == 1:
             result = "abcdefgxyz abc \n123456\n7890 !@#$&^"
         elif test_case == 2:
@@ -66,6 +70,8 @@ class Windows():
             result = (result.strip("\n") + ("adf" * 60) + str("\n")) * 600
         elif test_case == 4:
             result, error = run_linux("date")
+        elif test_case == 5:
+            result, error = run_linux("./test.sh")
         else:
             result, error = run_linux("dmesg")
 
@@ -187,21 +193,25 @@ class Windows():
 
             for column in range(draw_width):
                 self.window.addstr(
-                        line,
+                        line,        elif test_case == 4:
+            result, error = run_linux("date")
                         column,
                         str(frame[line][column]),
                         curses.color_pair(self.cooldown_color_map[int("0" + heatmap[line][column])])
                         )
 
         self.window.refresh()
-        n=""
 
-        #time.sleep(.1)
+# start mulitprocessing
+
+def frame_and_heat():
+
 
 
 def curses_color_setup():
     curses.init_pair(1, curses.COLOR_BLACK, curses.COLOR_YELLOW)
     curses.init_pair(2, curses.COLOR_BLACK, curses.COLOR_RED)
+
 
 def terminate_curses():
     curses.echo()
@@ -216,30 +226,29 @@ def terminate_curses():
             diff))
         print(stdscr)
 
-stdscr = curses.initscr()
-curses.noecho()
-curses.cbreak()
-curses.curs_set(0)
-stdscr.keypad(True)
 
-curses.start_color()
-curses_color_setup()
+def main():
+    stdscr = curses.initscr()
+    curses.noecho()
+    curses.cbreak()
+    curses.curs_set(0)
+    stdscr.keypad(True)
 
-
-try:
-    x = Windows(stdscr, "date", 0)
-
-    counter = 1
-    iterations = 30
-    error = False
+    curses.start_color()
+    curses_color_setup()
     start = timeit.default_timer()
+
     for y in range(iterations):
         ignore = True if y == 0 else False
+
         istart = timeit.default_timer()
+
         x.frame_generator()
         x.heatmap_generator()
+
         height, width = stdscr.getmaxyx()
         x.draw_frame(height, width)
+
         iend = timeit.default_timer()
         ipause = (1 - (iend - istart) - .001 )
         ipause = 0 if ipause < 0 else ipause
@@ -248,6 +257,19 @@ try:
 
     stop = timeit.default_timer()
     diff = start - stop
+
+
+### start here
+
+
+try:
+    x = Windows(stdscr, "date", 0)
+
+    counter = 1
+    iterations = 300
+    error = False
+
+    main()
 
 except:
     error = True
