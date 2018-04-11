@@ -10,13 +10,13 @@ import multiprocessing
 
 import timeit
 
-def run_linux(cmd):
-    result, error = subprocess.Popen(
-                                cmd.split(" "),
-                                stdout=subprocess.PIPE,
-                                stderr=subprocess.PIPE
-                                ).communicate()
-    return result, error
+
+class Testing():
+    iterations = None
+    start = None
+    pause = None
+    stop = None
+    diff = None
 
 class Windows():
     master_windows = []
@@ -52,7 +52,7 @@ class Windows():
 
     def test_case(self):
         # alternate test cases:
-        test_case = 5
+        test_case = 1
         if test_case == 1:
             result = "abcdefgxyz abc \n123456\n7890 !@#$&^"
         elif test_case == 2:
@@ -204,10 +204,13 @@ class Windows():
 
         self.window.refresh()
 
-# start mulitprocessing
-
-def frame_and_heat():
-    pass
+def run_linux(cmd):
+    result, error = subprocess.Popen(
+        cmd.split(" "),
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE
+    ).communicate()
+    return result, error
 
 
 def curses_color_setup():
@@ -222,31 +225,23 @@ def terminate_curses():
     curses.endwin()
     if error is False:
         print("{0} iterations, start:{1:.3f} stop:{2:.3f} diff:{3:.3f})".format(
-            iterations,
-            start,
-            stop,
-            diff))
-        print(stdscr)
+            Testing.iterations,
+            Testing.start,
+            Testing.stop,
+            Testing.diff))
 
 
-def main():
-    stdscr = curses.initscr()
-    curses.noecho()
-    curses.cbreak()
-    curses.curs_set(0)
-    stdscr.keypad(True)
-
+def controller(stdscr):
     x = Windows(stdscr, "date", 0)
-
-    counter = 1
-    iterations = 300
-    error = False
 
     curses.start_color()
     curses_color_setup()
-    start = timeit.default_timer()
 
-    for y in range(iterations):
+    Testing.iterations = 4
+    Testing.start = timeit.default_timer()
+    Testing.pause = 1
+
+    for y in range(Testing.iterations):
         ignore = True if y == 0 else False
 
         istart = timeit.default_timer()
@@ -258,13 +253,22 @@ def main():
         x.draw_frame(height, width)
 
         iend = timeit.default_timer()
-        ipause = (1 - (iend - istart) - .001 )
+        ipause = (Testing.pause - (iend - istart) - .001 )
         ipause = 0 if ipause < 0 else ipause
         time.sleep(ipause)
 
 
-    stop = timeit.default_timer()
-    diff = start - stop
+    Testing.stop = timeit.default_timer()
+    Testing.diff = Testing.start - Testing.stop
+
+def main():
+    stdscr = curses.initscr()
+    curses.noecho()
+    curses.cbreak()
+    curses.curs_set(0)
+    stdscr.keypad(True)
+
+    controller(stdscr)
 
 
 ### start here
@@ -272,6 +276,7 @@ def main():
 
 try:
 
+    error = False
     main()
 
 except:
