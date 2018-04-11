@@ -50,14 +50,7 @@ class Windows():
         self.cooldown_ticks = cooldown_ticks
         self.cooldown_color_map = [0,1] + ([2] * (cooldown_ticks + 1))
 
-    def frame_generator(self, test_case=None):
-        """ create a new frame. a frame is composed of a line by line list of the output from
-            the assigned command for this window """
-        # init variables and add new list items
-        new_pointer = len(self.frame)
-
-        # process desired command for this window
-
+    def test_case(self):
         # alternate test cases:
         test_case = 5
         if test_case == 1:
@@ -74,6 +67,16 @@ class Windows():
             result, error = run_linux("./test.sh")
         else:
             result, error = run_linux("dmesg")
+        return result
+
+    def frame_generator(self, test_case=None):
+        """ create a new frame. a frame is composed of a line by line list of the output from
+            the assigned command for this window """
+        # init variables and add new list items
+        new_pointer = len(self.frame)
+
+        # process desired command for this window
+        result = self.test_case()
 
         # break result into a line by line list
         try:
@@ -193,8 +196,7 @@ class Windows():
 
             for column in range(draw_width):
                 self.window.addstr(
-                        line,        elif test_case == 4:
-            result, error = run_linux("date")
+                        line,
                         column,
                         str(frame[line][column]),
                         curses.color_pair(self.cooldown_color_map[int("0" + heatmap[line][column])])
@@ -205,7 +207,7 @@ class Windows():
 # start mulitprocessing
 
 def frame_and_heat():
-
+    pass
 
 
 def curses_color_setup():
@@ -233,6 +235,12 @@ def main():
     curses.cbreak()
     curses.curs_set(0)
     stdscr.keypad(True)
+
+    x = Windows(stdscr, "date", 0)
+
+    counter = 1
+    iterations = 300
+    error = False
 
     curses.start_color()
     curses_color_setup()
@@ -263,11 +271,6 @@ def main():
 
 
 try:
-    x = Windows(stdscr, "date", 0)
-
-    counter = 1
-    iterations = 300
-    error = False
 
     main()
 
