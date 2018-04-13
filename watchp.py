@@ -7,7 +7,6 @@ import subprocess
 import curses
 import time
 import multiprocessing
-
 import timeit
 
 
@@ -50,9 +49,9 @@ class Windows():
         self.cooldown_ticks = cooldown_ticks
         self.cooldown_color_map = [0,1] + ([2] * (cooldown_ticks + 1))
 
-    def test_case(self):
+    def test_case(self, test_number):
         # alternate test cases:
-        test_case = 1
+        test_case = test_number
         if test_case == 1:
             result = "abcdefgxyz abc \n123456\n7890 !@#$&^"
         elif test_case == 2:
@@ -69,14 +68,14 @@ class Windows():
             result, error = run_linux("dmesg")
         return result
 
-    def frame_generator(self, test_case=None):
+    def frame_generator(self, test_number, test_case=None):
         """ create a new frame. a frame is composed of a line by line list of the output from
             the assigned command for this window """
         # init variables and add new list items
         new_pointer = len(self.frame)
 
         # process desired command for this window
-        result = self.test_case()
+        result = self.test_case(test_number)
 
         # break result into a line by line list
         try:
@@ -204,6 +203,7 @@ class Windows():
 
         self.window.refresh()
 
+
 def run_linux(cmd):
     result, error = subprocess.Popen(
         cmd.split(" "),
@@ -231,35 +231,34 @@ def terminate_curses():
             Testing.diff))
 
 
-def controller(stdscr):
+def controller(id,stdscr,draw_id,test_number):
+
     x = Windows(stdscr, "date", 0)
 
     curses.start_color()
     curses_color_setup()
 
-    Testing.iterations = 4
-    Testing.start = timeit.default_timer()
-    Testing.pause = 1
 
     for y in range(Testing.iterations):
         ignore = True if y == 0 else False
 
         istart = timeit.default_timer()
 
-        x.frame_generator()
+        x.frame_generator(test_number)
         x.heatmap_generator()
 
         height, width = stdscr.getmaxyx()
-        x.draw_frame(height, width)
+        if draw_id.value == id:
+            x.draw_frame(height, width)
 
         iend = timeit.default_timer()
         ipause = (Testing.pause - (iend - istart) - .001 )
         ipause = 0 if ipause < 0 else ipause
         time.sleep(ipause)
 
-
-    Testing.stop = timeit.default_timer()
-    Testing.diff = Testing.start - Testing.stop
+def get_key(stdscr):
+    keystroke = stdscr.getch()
+    return chr(keystroke)
 
 def main():
     stdscr = curses.initscr()
@@ -268,22 +267,47 @@ def main():
     curses.curs_set(0)
     stdscr.keypad(True)
 
-    controller(stdscr)
+    Testing.iterations = 26
+    Testing.start = timeit.default_timer()
+    Testing.pause = 1
+
+    draw_id=multiprocessing.Value('i',1)
+    p1 = multiprocessing.Process(target=controller, args=(1,stdscr,draw_id,5))
+    p2 = multiprocessing.Process(target=controller, args=(2,stdscr,draw_id,4))
+    p1.start()
+    p2.start()
+
+    done = False
+    while not done:
+        keystroke = get_key(stdscr)
+        if keystroke == "1":
+            draw_id.value = 1
+        elif keystroke == "2":
+            draw_id.value = 2
+        elif keystroke == "q":
+            p1.terminate()
+            p2.terminate()
+            done = True
+            #sys.exit()
+        time.sleep(.1)
+
+    Testing.stop = timeit.default_timer()
+    Testing.diff = Testing.start - Testing.stop
 
 
 ### start here
 
+if __name__ == "__main__":
 
-try:
+    try:
+        error = False
+        main()
 
-    error = False
-    main()
+    except:
+        error = True
+        terminate_curses()
+        raise
 
-except:
-    error = True
-    terminate_curses()
-    raise
-
-if curses.isendwin() is not True:
-    terminate_curses()
+    if curses.isendwin() is not True:
+        terminate_curses()
 
