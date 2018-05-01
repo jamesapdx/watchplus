@@ -16,8 +16,9 @@ class Testing():
     pause = None
     stop = None
     diff = None
+    total_watches = None
 
-class Generator():
+class Generators():
 
     def __init__(self, cmd, current_time):
         self.cmd = cmd
@@ -198,6 +199,15 @@ def curses_color_setup():
     curses.init_pair(2, curses.COLOR_BLACK, curses.COLOR_RED)
 
 
+def start_curses()
+    stdscr = curses.initscr()
+    curses.noecho()
+    curses.cbreak()
+    curses.curs_set(0)
+    stdscr.keypad(True)
+    return stdscr
+
+
 def terminate_curses():
     curses.echo()
     curses.nocbreak()
@@ -210,13 +220,79 @@ def terminate_curses():
             Testing.stop,
             Testing.diff))
 
+def get_key(stdscr):
+    keystroke = stdscr.getch()
+    return chr(keystroke)
 
-def controller(id,stdscr,draw_id,test_number):
+def process_key(keystroke):
+    done = False
+    while not done:
+        keystroke = get_key(stdscr)
+        if keystroke == "1":
+            draw_id.value = 1
+        elif keystroke == "2":
+            draw_id.value = 2
+        elif keystroke == "q":
+            p1.terminate()
+            p2.terminate()
+            done = True
+            #sys.exit()
+        time.sleep(.1)
+    pass
 
-    x = Generator("date", 0)
+class Watches():
+
+    def __init__(self):
+        self.cmd = cmd
+        self.creation_time = current_time
+        self.ticks_per_iter = 1
+        self.cooldown_ticks = None
+        self.cooldown_color_map = []
+        self.cooldown_color_setup(4)
+
+        self.frame_queue = None
+        self.heatmap_queue = None
+        self.process = None
+
+        self.frame = [""]
+        # state: 0=no change, 1=change, used for fast comparison of new frames
+        self.frame_state = [0]
+        self.heatmap = [""]
+        # state: 0=no change, 1=change, used for fast comparison of new frames
+        self.heatmap_state = [0]
+        # state: 0=no ignore, 1=ignore
+        self.heatmap_ignore = [0]
+
+
+def controller(id, draw_id, test_number):
+    Testing.iterations = 100
+    Testing.start = timeit.default_timer()
+    Testing.pause = 1
+    Testing.total_watches = 5
+
+    stdscr = start_curses()
+    x = Generators("date", 0)
 
     curses.start_color()
     curses_color_setup()
+
+    watches = []
+    generators = []
+    for x in range(Testing.total_watches):
+        generators.append()
+        generators[x] = Generators()
+        watches.append()
+        watches[x] = Watches()
+        watches[x].frame_queue = multiprocessing.Queue(1)
+        watches[x].heatmap_queue = multiprocessing.Queue(1)
+        watches[x].process = multiprocessing.Process(
+                    target = generators.runner,
+                    args = (
+                            watches[x].frame_queue,
+                            watches[x].heatmap_queue
+                    ))
+        watches[x].process.start()
+
 
     for y in range(Testing.iterations):
         ignore = True if y == 0 else False
@@ -234,40 +310,11 @@ def controller(id,stdscr,draw_id,test_number):
         ipause = 0 if ipause < 0 else ipause
         time.sleep(ipause)
 
-def get_key(stdscr):
-    keystroke = stdscr.getch()
-    return chr(keystroke)
 
 def main():
-    stdscr = curses.initscr()
-    curses.noecho()
-    curses.cbreak()
-    curses.curs_set(0)
-    stdscr.keypad(True)
 
-    Testing.iterations = 96
-    Testing.start = timeit.default_timer()
-    Testing.pause = 1
 
-    draw_id=multiprocessing.Value('i',1)
-    p1 = multiprocessing.Process(target=controller, args=(1,stdscr,draw_id,5))
-    p2 = multiprocessing.Process(target=controller, args=(2,stdscr,draw_id,0))
-    p1.start()
-    p2.start()
-
-    done = False
-    while not done:
-        keystroke = get_key(stdscr)
-        if keystroke == "1":
-            draw_id.value = 1
-        elif keystroke == "2":
-            draw_id.value = 2
-        elif keystroke == "q":
-            p1.terminate()
-            p2.terminate()
-            done = True
-            #sys.exit()
-        time.sleep(.1)
+    controller()
 
     Testing.stop = timeit.default_timer()
     Testing.diff = Testing.start - Testing.stop
