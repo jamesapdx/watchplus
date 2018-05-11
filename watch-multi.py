@@ -10,19 +10,12 @@ import multiprocessing
 import timeit
 
 
-class Testing():
-    iterations = None
-    start = None
-    pause = None
-    stop = None
-    diff = None
-    total_watches = None
 
-class Generators():
+class FrameGenerators():
 
-    def __init__(self, cmd, current_time):
-        self.cmd = cmd
-        self.creation_time = current_time
+    def __init__(self):
+        self.command = None
+        self.creation_time = None
         self.ticks_per_iter = 1
         self.cooldown_ticks = None
         self.cooldown_color_map = []
@@ -41,42 +34,34 @@ class Generators():
         self.cooldown_ticks = cooldown_ticks
         self.cooldown_color_map = [0,1] + ([2] * (cooldown_ticks + 1))
 
-    def test_case(self, test_number):
-        # alternate test cases:
-        test_case = test_number
-        if test_case == 1:
-            result = "abcdefgxyz abc \n123456\n7890 !@#$&^"
-        elif test_case == 2:
-            result = str(timeit.default_timer())
-            time.sleep(.2)
-        elif test_case == 3:
-            result = str(timeit.default_timer())
-            result = (result.strip("\n") + ("adf" * 60) + str("\n")) * 600
-        elif test_case == 4:
-            result, error = run_linux("date")
-        elif test_case == 5:
-            result, error = run_linux("./test.sh")
-        else:
-            result, error = run_linux("dmesg")
-        return result
 
-    def runner(self):
-        test_number = 1
-        first_run = True
+    def runner(self, command, frame_queue, heatmap_queue, instruction_queue ):
+        self.command = command
         current_pointer = 0
         last_pointer = 1
+        first_run = True
+        counter = 0
 
         while True:
-           self.frame_generator(test_number, first_run, current_pointer, last_pointer)
-           self.heatmap_generator(first_run, current_pointer, last_pointer)
+            instruction = instruction_queue.get(False)
+            if instruction == "end":
+                break
+            self.frame_generator(first_run, current_pointer, last_pointer)
+            self.heatmap_generator(first_run, current_pointer, last_pointer)
+            frame_queue.put(self.frame[current_pointer])
+            heatmap_queue.put(self.heatmap[current_pointer])
 
-    def frame_generator(self, test_number, first_run, current_pointer, last_pointer ):
+            current_pointer = 1 if current_pointer == 0 else 0
+            last_pointer = 1 if last_pointer == 0 else 0
+            first_run = False
+
+
+    def frame_generator(self, first_run, current_pointer, last_pointer):
         """ create a new frame. a frame is composed of a line by line list of the output from
             the assigned command for this window """
 
         # process desired command for this window
-        result = self.test_case(test_number)
-
+        result = run_linux(self.command)
         # break result into a line by line list
         try:
             self.frame[current_pointer] = result.decode().splitlines()
@@ -199,7 +184,7 @@ def curses_color_setup():
     curses.init_pair(2, curses.COLOR_BLACK, curses.COLOR_RED)
 
 
-def start_curses()
+def start_curses():
     stdscr = curses.initscr()
     curses.noecho()
     curses.cbreak()
@@ -240,10 +225,11 @@ def process_key(keystroke):
         time.sleep(.1)
     pass
 
-class Watches():
+
+class FrameStorage():
 
     def __init__(self):
-        self.cmd = cmd
+        self.command = command
         self.creation_time = current_time
         self.ticks_per_iter = 1
         self.cooldown_ticks = None
@@ -252,54 +238,84 @@ class Watches():
 
         self.frame_queue = None
         self.heatmap_queue = None
+        self.instruction_queue = None
         self.process = None
 
         self.frame = [""]
+        # use a pointer to point back to frames that are equal, prevents storage increase
+        self.frame_pointer = [1]
         # state: 0=no change, 1=change, used for fast comparison of new frames
         self.frame_state = [0]
         self.heatmap = [""]
+        self.heatmap_pointer = [1]
         # state: 0=no change, 1=change, used for fast comparison of new frames
         self.heatmap_state = [0]
-        # state: 0=no ignore, 1=ignore
         self.heatmap_ignore = [0]
 
+        self.v_position = 0
+        self.h_postion = 0
 
-def controller(id, draw_id, test_number):
-    Testing.iterations = 100
-    Testing.start = timeit.default_timer()
-    Testing.pause = 1
-    Testing.total_watches = 5
+        self.height =None
+        self.width = None
+        self.x_position = None
+        self.y_position = None
+
+
+class Settings():
+    iterations = 100
+    start = None
+    increment = 1
+    stop = None
+    diff = None
+    commands = [
+        'echo "abcdefgxyz abc \n123456\n7890 !@#$&^"',
+        'python -c "import timeit; print(str(timeit.default_timer()))"',
+        'date',
+        'date',
+        './test.sh',
+        'dmesg' ]
+    commands_count = len(test_number)
+
+def InitializeClass(command):
+    generator = FrameGenerators()
+    frame = FrameStorage()
+    frame.frame_queue = multiprocessing.Queue(1)
+    frame.heatmap_queue = multiprocessing.Queue(1)
+    frame.instruction_queue = multiprocessing.Queue(1)
+    frame.command = command
+    frame.process = multiprocessing.Process(
+        target = generator.runner,
+        args = (
+            frame.command,
+            frame.frame_queue,
+            frame.heatmap_queue
+            frame.instruction_queue
+        ))
+    frame.process.start()
+    return frame, generator
+
+
+def controller():
+    Settings.start = timeit.default_timer()
 
     stdscr = start_curses()
-    x = Generators("date", 0)
 
     curses.start_color()
     curses_color_setup()
 
-    watches = []
+    views = []
     generators = []
-    for x in range(Testing.total_watches):
+    for x in range(Settings.commands_count):
         generators.append()
-        generators[x] = Generators()
-        watches.append()
-        watches[x] = Watches()
-        watches[x].frame_queue = multiprocessing.Queue(1)
-        watches[x].heatmap_queue = multiprocessing.Queue(1)
-        watches[x].process = multiprocessing.Process(
-                    target = generators.runner,
-                    args = (
-                            watches[x].frame_queue,
-                            watches[x].heatmap_queue
-                    ))
-        watches[x].process.start()
+        frames.append()
+        frames[x], generators[x] = InitializeClass(Settings.command[x])
+
+    for counter in range(Settings.iterations):
 
 
-    for y in range(Testing.iterations):
-        ignore = True if y == 0 else False
 
-        istart = timeit.default_timer()
 
-        x.runner()
+def draw_frame(window, frame, heatmap, height, width, refresh=None, pointer=None):
 
         height, width = stdscr.getmaxyx()
         if draw_id.value == id:
