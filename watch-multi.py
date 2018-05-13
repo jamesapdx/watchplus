@@ -15,11 +15,17 @@ class FrameGenerators():
 
     def __init__(self):
         self.command = None
+        self.interval = None
+        self.key_time = None
+        self.start = None
         self.creation_time = None
         self.ticks_per_iter = 1
         self.cooldown_ticks = None
         self.cooldown_color_map = []
         self.cooldown_color_setup(4)
+
+        current = None
+        last = None
 
         self.frame = [[],[]]
         # state: 0=no change, 1=change, used for fast comparison of new frames
@@ -35,10 +41,13 @@ class FrameGenerators():
         self.cooldown_color_map = [0,1] + ([2] * (cooldown_ticks + 1))
 
 
-    def runner(self, command, frame_queue, heatmap_queue, instruction_queue ):
+    def runner(self, command, interval, start, frame_queue, heatmap_queue, timer_queue, instruction_queue ):
         self.command = command
-        current_pointer = 0
-        last_pointer = 1
+        self.interval = interval
+        self.start = start
+        self.key_time = start
+        self.current = 0
+        self.last = 1
         first_run = True
         counter = 0
 
@@ -46,59 +55,103 @@ class FrameGenerators():
             instruction = instruction_queue.get(False)
             if instruction == "end":
                 break
-            self.frame_generator(first_run, current_pointer, last_pointer)
-            self.heatmap_generator(first_run, current_pointer, last_pointer)
-            frame_queue.put(self.frame[current_pointer])
-            heatmap_queue.put(self.heatmap[current_pointer])
+            self.frame_generator(first_run)
+            self.heatmap_generator(first_run)
 
-            current_pointer = 1 if current_pointer == 0 else 0
-            last_pointer = 1 if last_pointer == 0 else 0
             first_run = False
 
+    def process_interval(self):
+        self.put_queues()
+        self.flip_pointers()
+        self.sleep_till_next_interval()
 
-    def frame_generator(self, first_run, current_pointer, last_pointer):
+    def process_precision(self):
+        self.key_time += self.interval
+        current_time = timeit.default_timer()
+        if current_time < self.key_time:
+            self.put_queues()
+            self.flip_pointers()
+            self.sleep_till_next_precision_interval()
+        else:
+            drop()
+
+    def put_queues(self):
+        current = self.current
+        last = self.last
+        frame_queue.put(self.frame[current])
+        heatmap_queue.put(self.heatmap[current])
+
+    def flip_pointers(self):
+        self.current = 1 if self.current == 0 else 0
+        self.last = 1 if self.current == 0 else 0
+
+    def sleep_till_next_interval(self):
+        time.sleep(self.interval)
+
+    def sleep_till_next_precision_interval(self):
+        current_time = timeit.default_timer()
+        if current_time < self.key_time:
+            #time left before next interval, so sleep a bit
+            time.sleep(self.key_time - current_time)
+        else:
+            #exceded next interval, so increase key_time. should only happen if queue transfer exceeded the interval
+            self.key_time = self.key_time * int((current_time - key_time) / self.interval) * self.interval
+
+    def drop(self):
+        frame_queue.put("dropped")
+        heatmap_queue.put("dropped")
+        current_time = timeit.default_timer()
+        self.key_time = key_time * int((current_time - key_time) / self.interval) * self.interval
+
+    def frame_generator(self, first_run):
         """ create a new frame. a frame is composed of a line by line list of the output from
             the assigned command for this window """
+
+        current = self.current
+        last = self.last
 
         # process desired command for this window
         result = run_linux(self.command)
         # break result into a line by line list
         try:
-            self.frame[current_pointer] = result.decode().splitlines()
+            self.frame[current] = result.decode().splitlines()
         except AttributeError:
-            self.frame[current_pointer] = str(result).splitlines()
+            self.frame[current] = str(result).splitlines()
 
         if first_run is True:
             # first time run, store it
-            self.frame_state[current_pointer] = 0
-        elif self.frame[current_pointer] == self.frame[last_pointer]:
+            self.frame_state[current] = 0
+        elif self.frame[current] == self.frame[last]:
             # no change from last one, set the pointer to the last frame
-            self.frame_state[current_pointer] = 0
+            self.frame_state[current] = 0
         else:
             # frame is different then the last one, store it
-            self.frame_state[current_pointer] = 1
+            self.frame_state[current] = 1
 
-    def heatmap_generator(self, first_run, current_pointer, last_pointer, ignore=None):
+
+    def heatmap_generator(self, first_run, ignore=None):
         """ create a new heatmap frame. a heatmap frame is composed of a line by line list of digits indicating the
             difference between each character in this frame versus the last frame.
                 0  = no change ever
                 1  = changed at some point in the past
                 >1 = recent change, will "cooldown" by 1 with with each new frame till it reaches 1
                 """
-        self.heatmap_state[current_pointer] = 0
-        self.heatmap_ignore[current_pointer] = 0
+        current = self.current
+        last = self.last
+        self.heatmap_state[current] = 0
+        self.heatmap_ignore[current] = 0
 
         if first_run is True:
             # first frame, so build a new heatmap of all 0s
-            for counter in range(len(self.frame[current_pointer])):
-                self.heatmap[current_pointer] = len(self.frame[current_pointer]) * "0"
-        elif self.frame_state[current_pointer] == 0 and self.heatmap_state[last_pointer] == 0:
+            for counter in range(len(self.frame[current])):
+                self.heatmap[current] = len(self.frame[current]) * "0"
+        elif self.frame_state[current] == 0 and self.heatmap_state[last] == 0:
             # appears nothing has changed and no cooldown needed, so simply point to the prior heatmap
-            self.heatmap[current_pointer] = self.heatmap[last_pointer]
+            self.heatmap[current] = self.heatmap[last]
         elif ignore is True:
             # set to ignore any changes on this frame, so point to the prior heatmap
-            self.heatmap_ignore[current_pointer] = 1
-            self.heatmap[current_pointer] = self.heatmap[last_pointer]
+            self.heatmap_ignore[current] = 1
+            self.heatmap[current] = self.heatmap[last]
         else:
             # this frame is different than the last, so make a new heatmap just for the lines that are different
 
@@ -106,7 +159,7 @@ class FrameGenerators():
             heatmap = [[], []]
 
             frame[0], frame[-1], heatmap[-1], max_lines = self.equalize_lengths(
-                [""], self.frame[current_pointer], self.frame[last_pointer], self.heatmap[last_pointer])
+                [""], self.frame[current], self.frame[last], self.heatmap[last])
 
             # start line by line comparison
             for line in range(max_lines):
@@ -130,12 +183,12 @@ class FrameGenerators():
 
                 # cooldown by 1 any heatmap char that is greater than 1
                 if int(max(heatmap[0][line])) > 1:
-                    self.heatmap_state[current_pointer] = 1
+                    self.heatmap_state[current] = 1
                     for cooldown in range(2, self.cooldown_ticks + 3, 1):
                         heatmap[0][line] = heatmap[0][line].replace(str(cooldown),str(cooldown - 1))
 
                 # save the new heatmap for this frame to the main heatmap list
-                self.heatmap[current_pointer].append(heatmap[0][line])
+                self.heatmap[current].append(heatmap[0][line])
 
     def equalize_lengths(self, adder, *args):
         lengths = [len(value) for value in args]
@@ -228,18 +281,11 @@ def process_key(keystroke):
 
 class FrameStorage():
 
-    def __init__(self):
-        self.command = command
-        self.creation_time = current_time
+    def __init__(self, command, interval, start):
         self.ticks_per_iter = 1
         self.cooldown_ticks = None
         self.cooldown_color_map = []
         self.cooldown_color_setup(4)
-
-        self.frame_queue = None
-        self.heatmap_queue = None
-        self.instruction_queue = None
-        self.process = None
 
         self.frame = [""]
         # use a pointer to point back to frames that are equal, prevents storage increase
@@ -260,6 +306,28 @@ class FrameStorage():
         self.x_position = None
         self.y_position = None
 
+        self.generator = FrameGenerators()
+        self.frame_queue = multiprocessing.Queue(1)
+        self.heatmap_queue = multiprocessing.Queue(1)
+        self.timer_queue = multiprocessing.Queue(1)
+        self.instruction_queue = multiprocessing.Queue(1)
+        self.command = command
+        self.interval = interval
+        self.start = start
+        self.process = multiprocessing.Process(
+            target = self.generator.runner,
+            args = (
+                self.command,
+                self.interval,
+                self.start,
+                self.frame_queue,
+                self.heatmap_queue,
+                self.timer_queue,
+                self.instruction_queue
+            ))
+
+    def start_generator(self):
+        self.process.start()
 
 class Settings():
     iterations = 100
@@ -274,45 +342,34 @@ class Settings():
         'date',
         './test.sh',
         'dmesg' ]
-    commands_count = len(test_number)
-
-def InitializeClass(command):
-    generator = FrameGenerators()
-    frame = FrameStorage()
-    frame.frame_queue = multiprocessing.Queue(1)
-    frame.heatmap_queue = multiprocessing.Queue(1)
-    frame.instruction_queue = multiprocessing.Queue(1)
-    frame.command = command
-    frame.process = multiprocessing.Process(
-        target = generator.runner,
-        args = (
-            frame.command,
-            frame.frame_queue,
-            frame.heatmap_queue
-            frame.instruction_queue
-        ))
-    frame.process.start()
-    return frame, generator
+    intervals = [1, 1, 1, 1, 1, 1]
+    commands_count = len(commands)
 
 
 def controller():
-    Settings.start = timeit.default_timer()
 
     stdscr = start_curses()
 
     curses.start_color()
     curses_color_setup()
 
-    views = []
-    generators = []
+    frames = []
+    Settings.start = timeit.default_timer()
     for x in range(Settings.commands_count):
-        generators.append()
-        frames.append()
-        frames[x], generators[x] = InitializeClass(Settings.command[x])
+        frames.append(None)
+        frames[x] = InitializeClass(
+                    Settings.commands[x],
+                    Settings.intervals[x],
+                    Settings.start)
+        frames[x].start_generator()
 
     for counter in range(Settings.iterations):
+        pass
 
 
+
+    Settings.stop = timeit.default_timer()
+    Settings.diff = Settings.start - Settings.stop
 
 
 def draw_frame(window, frame, heatmap, height, width, refresh=None, pointer=None):
@@ -327,22 +384,11 @@ def draw_frame(window, frame, heatmap, height, width, refresh=None, pointer=None
         time.sleep(ipause)
 
 
-def main():
-
-
-    controller()
-
-    Testing.stop = timeit.default_timer()
-    Testing.diff = Testing.start - Testing.stop
-
-
-### start here
-
 if __name__ == "__main__":
 
     try:
         error = False
-        main()
+        controller()
 
     except:
         error = True
