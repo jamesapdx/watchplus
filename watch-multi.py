@@ -35,6 +35,7 @@ class FrameStorage:
         self.new_frame()
 
         self.presentation_mode = "live"
+        self.window = None
         self.window_id = None
 
         self.height = None
@@ -129,14 +130,13 @@ class FrameStorage:
         elif self.heatmap_state[position] == "ignored":
             self.heatmap_pointer[position] = self.heatmap_pointer[position - 1]
 
-    def draw_live_frame(self, stdscr):
+    def draw_live_frame(self):
 
         if self.presentation_mode == "live" and self.window_id is not None:
             pass
 
-        draw_window(stdscr, self.frame[self.frame_pointer[-1]], self.heatmap[self.heatmap_pointer[-1]])
-
-
+        self.window.frame_queue.put(self.frame[self.frame_pointer[-1]])
+        self.window.heatmap_queue.put(self.heatmap[self.heatmap_pointer[-1]])
 
 # noinspection PyAttributeOutsideInit
 class FrameGenerators:
@@ -333,7 +333,7 @@ class FrameGenerators:
         return values
 
 class Windows:
-    isinstance = []
+    instances = []
 
     def __init__(self):
         self.v_position = 0
@@ -343,64 +343,70 @@ class Windows:
 
         self.command_id = 0
 
+        self.window = curses.newwin(self.heigth, self.width, self.v_position, self.h_postion)
+
         self.frame_queue = multiprocessing.Queue(1)
         self.heatmap_queue = multiprocessing.Queue(1)
         self.instruction_queue = multiprocessing.Queue(1)
         self.process_draw_window = multiprocessing.Process(
-            target=self.draw_window,
+            target=draw_window,
             args=(
+                self.window,
                 self.frame_queue,
                 self.heatmap_queue,
-                self.state_queue,
                 self.instruction_queue
             ))
 
-        Windows.isinstance.append(self)
-        self.window_id = len(Windows) - 1
+        Windows.instances.append(self)
+        self.window_id = len(Windows.instances) - 1
 
-def draw_window(window, frame_queue, heatmap_queue, geometry="window", custom_height=9999, custom_width=9999, refresh=None):
+    def start_draw_window(self):
+        self.process_draw_window.start()
+
+    def terminate_draw_window(self):
+        print(self.process_draw_window)
+        self.process_draw_window.terminate()
+
+def draw_window(window, frame_queue, heatmap_queue, geometry="window", custom_height=9999, custom_width=9999):
 
     if Settings.curses is False:
         subprocess.Popen("clear").communicate()
         print("\n".join(frame_queue))
         print("\n".join(heatmap_queue))
-
         return
 
-    #while True:
-    frame = frame_queue
-    heatmap = heatmap_queue
+    custom_height = 9999
+    custom_width = 9999
 
-    window.clear()
+    while True:
+        frame = frame_queue.get()
+        heatmap = heatmap_queue.get()
 
-    terminal_height, terminal_width = window.getmaxyx()
+        window.clear()
 
-    if geometry == "window":
+        terminal_height, terminal_width = window.getmaxyx()
+
+        #if geometry == "window":
         draw_height = min(len(frame), terminal_height - 1, custom_height - 1)
         width = min(terminal_width, custom_width)
 
-    for line in range(draw_height):
-        #frame[line], heatmap[line], max_char = self.equalize_lengths(" ", frame[line], heatmap[line])
-        #heatmap = heatmap.replace(" ", "0")
+        for line in range(draw_height):
+            #frame[line], heatmap[line], max_char = self.equalize_lengths(" ", frame[line], heatmap[line])
+            #heatmap = heatmap.replace(" ", "0")
 
-        draw_width = min(len(frame[line]), width)
+            draw_width = min(len(frame[line]), width)
 
-        for column in range(draw_width):
-            try:
-                char = str(frame[line][column])
-            except IndexError:
-                char = "X"
-            try:
-                color_pair = curses.color_pair(Settings.cooldown_color_map[int("0" + heatmap[line][column])])
-            except IndexError:
-                color_pair = 0
-            window.addstr(
-                line,
-                column,
-                char,
-                color_pair
-            )
-    window.refresh()
+            for column in range(draw_width):
+                try:
+                    char = str(frame[line][column])
+                except IndexError:
+                    char = "?"
+                try:
+                    color_pair = curses.color_pair(Settings.cooldown_color_map[int("0" + heatmap[line][column])])
+                except IndexError:
+                    color_pair = 0
+                window.addstr(line, column, char, color_pair)
+        window.refresh()
 
 
 def get_key(stdscr):
@@ -462,18 +468,16 @@ def start_curses():
 def terminate_program():
     for frame in FrameStorage.instances:
         frame.terminate_generator()
+    for window in Windows.instances:
+        window.terminate_draw_window()
+
     if Settings.curses is False:
         return
+
     curses.echo()
     curses.nocbreak()
     curses.curs_set(1)
     curses.endwin()
-    # if error is False:
-    #     print("{0} iterations, start:{1:.3f} stop:{2:.3f} diff:{3:.3f})".format(
-    #         Testing.iterations,
-    #         Testing.start,
-    #         Testing.stop,
-    #         Testing.diff))
 
 class Settings:
     duration = 12
@@ -502,6 +506,7 @@ class Settings:
     cooldown_ticks = 4
     cooldown_color_map = [0, 1] + ([2] * (cooldown_ticks + 1))
 
+    windows_count = 1
 
 def controller():
     if Settings.curses:
@@ -528,12 +533,21 @@ def controller():
     for x in range(Settings.commands_count):
         frames[x].start_generator()
 
+    windows = []
+    for x in range(Settings.windows_count):
+        windows.append("")
+        windows[x] = Windows()
+        windows[x].start_draw_window()
+        frames[x].window_id = x
+        frames[x].window = windows[x]
+
+
     while True:
         for x in range(Settings.commands_count):
             if frames[x].get_state() is True:
                 frames[x].store_frame()
                 frames[x].store_heatmap()
-                frames[x].draw_live_frame(stdscr)
+                frames[x].draw_live_frame()
                 frames[x].new_frame()
         time.sleep(Settings.spacer)
         current_time = timeit.default_timer()
