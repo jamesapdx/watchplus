@@ -10,19 +10,15 @@ import multiprocessing
 import timeit
 
 
-class FrameStorage:
+class FrameController:
     instances = []
 
-    def __init__(self, command, interval, start, precision):
-        self.command = command
-        self.interval = interval
-        self.start = start
-        self.precision = precision
+    def __init__(self):
+        # class fields
+        FrameController.instances.append(self)
+        self.command_id = len(FrameController.instances) - 1
 
-        self.ticks_per_iter = 1
-        self.cooldown_ticks = None
-        self.cooldown_color_map = []
-
+        # frame storage fields
         self.frame = []
         self.frame_pointer = []
         self.frame_state = []
@@ -34,35 +30,125 @@ class FrameStorage:
         self.current = 0
         self.new_frame()
 
-        self.presentation_mode = "live"
+        # window fields
         self.window = None
         self.window_id = None
+        self.heigth = 0
+        self.width = 0
+        self.v_position = 0
+        self.h_position = 0
+        self.x_position = 0
+        self.y_position = 0
 
-        self.height = None
-        self.width = None
-        self.x_position = None
-        self.y_position = None
+    def initialize_generator_subprocess(self):
+        #self.cooldown_ticks = None
+        #self.cooldown_color_map = []
 
-        self.generator = FrameGenerators()
-        self.frame_queue = multiprocessing.Queue(1)
-        self.heatmap_queue = multiprocessing.Queue(1)
-        self.state_queue = multiprocessing.Queue(1)
-        self.instruction_queue = multiprocessing.Queue(1)
-        self.process_runner = multiprocessing.Process(
-            target=self.generator.runner,
+        self.generator_seed = FrameGenerators()
+        self.generator_frame_queue = multiprocessing.Queue(1)
+        self.generator_heatmap_queue = multiprocessing.Queue(1)
+        self.generator_state_queue = multiprocessing.Queue(1)
+        self.generator_instruction_queue = multiprocessing.Queue(1)
+        self.process_generator = multiprocessing.Process(
+            target=self.generator_seed.controller,
             args=(
                 self.command,
                 self.interval,
                 self.start,
                 self.precision,
-                self.frame_queue,
-                self.heatmap_queue,
-                self.state_queue,
-                self.instruction_queue
+                self.generator_frame_queue,
+                self.generator_heatmap_queue,
+                self.generator_state_queue,
+                self.generator_instruction_queue,
+                self.controller_instruction_queue
             ))
 
-        FrameStorage.instances.append(self)
-        self.command_id = len(FrameStorage.instances) - 1
+    def initialize_draw_window_subprocess(self):
+        self.window = None
+        if Settings.curses is True:
+            self.window = curses.newwin(self.heigth, self.width, self.v_position, self.h_position)
+        self.draw_frame_queue = multiprocessing.Queue(1)
+        self.draw_heatmap_queue = multiprocessing.Queue(1)
+        self.draw_instruction_queue = multiprocessing.Queue(1)
+        self.process_draw_window = multiprocessing.Process(
+            target=draw_window,
+            args=(
+                self.window,
+                self.draw_frame_queue,
+                self.draw_heatmap_queue,
+                self.draw_instruction_queue,
+                self.controller_instruction_queue
+            ))
+
+    def initialize_subprocesses(self):
+        self.initialize_generator_subprocess()
+        self.initialize_draw_window_subprocess()
+
+    def start_subprocesses(self):
+        self.process_generator.start()
+        self.process_draw_window.start()
+
+    def terminate_subprocesses(self):
+        self.process_generator.terminate()
+        self.process_draw_window.terminate()
+
+    def controller(self, command, interval, start, precision, instruction_queue, system_queue):
+        self.command = command
+        self.interval = interval
+        self.start = start
+        self.precision = precision
+        self.controller_instruction_queue = instruction_queue
+        self.system_queue = system_queue
+        self.controller_sleep = Settings.controller_sleep
+        self.controller_instruction = None
+        self.controller_sleep = .01
+        self.key_press = None
+        self.presentation_mode = "live"
+
+        # start sub-processes
+        self.process_generator = None
+        self.process_draw_window = None
+        self.initialize_subprocesses()
+        self.start_subprocesses()
+
+        while True:
+            self.controller_instruction = self.controller_instruction_queue.get()
+            if self.controller_instruction == "terminate":
+                self.terminate_subprocesses()
+                break
+            if self.controller_instruction == "generator":
+                Settings.debug("c1")
+                if self.get_frame_state() is True:
+                    Settings.debug("c2")
+                    self.store_frame()
+                    Settings.debug("c3")
+                    self.store_heatmap()
+                    Settings.debug("c4")
+                    self.write_frame()
+                    if self.presentation_mode == "live":
+                        self.draw_live_frame()
+                    if self.presentation_mode == "playback":
+                        pass
+                Settings.debug("c5")
+            Settings.debug("c6")
+
+    def get_key_press(self):
+        return False
+
+    def get_frame_state(self):
+        try:
+            state_timeout = 1
+            a, b, c, d = self.generator_state_queue.get(block=True,timeout=state_timeout)
+        except multiprocessing.queues.Empty:
+            Settings.debug("state_timeout")
+            return False
+        else:
+            self.new_frame()
+            self.frame_state[self.current] = a
+            self.heatmap_state[self.current] = b
+            self.frame_run_time[self.current] = c
+            self.frame_completion_time[self.current] = d
+            return True
 
     def new_frame(self):
         self.frame.append("")
@@ -75,68 +161,51 @@ class FrameStorage:
         self.heatmap_state.append("")
         self.current = len(self.frame) - 1
 
-    def start_generator(self):
-        self.process_runner.start()
-
-    def terminate_generator(self):
-        self.process_runner.terminate()
-
-    def get_state(self, position=None):
-        if position is None:
-            position = self.current
-        try:
-            a, b, c, d = self.state_queue.get(False)
-        except multiprocessing.queues.Empty:
-            return False
-        else:
-            self.frame_state[position] = a
-            self.heatmap_state[position] = b
-            self.frame_run_time[position] = c
-            self.frame_completion_time[position] = d
-            return True
-
-    def store_frame(self, position=None):
-        if position is None:
-            position = self.current
-        if self.frame_state[position] == "changed":
+    def store_frame(self):
+        if self.frame_state[self.current] == "changed":
             try:
-                self.frame[position] = self.frame_queue.get(False)
+                frame_timeout = 1
+                self.frame[self.current] = self.generator_frame_queue.get(block=True,timeout=frame_timeout)
             except multiprocessing.queues.Empty:
-                self.frame_state[position] = "dropped"
-                self.heatmap_state[position] = "dropped"
-                self.frame_pointer[position] = self.frame_pointer[position - 1]
+                self.frame_state[self.current] = "dropped"
+                self.heatmap_state[self.current] = "dropped"
+                self.frame_pointer[self.current] = self.frame_pointer[self.current - 1]
             else:
-                self.frame_pointer[position] = position
-        elif self.frame_state[position] == "unchanged":
-            self.frame_pointer[position] = self.frame_pointer[position - 1]
-        elif self.frame_state[position] == "dropped":
-            self.frame_pointer[position] = self.frame_pointer[position - 1]
+                self.frame_pointer[self.current] = self.current
+        elif self.frame_state[self.current] == "unchanged":
+            self.frame_pointer[self.current] = self.frame_pointer[self.current - 1]
+        elif self.frame_state[self.current] == "dropped":
+            self.frame_pointer[self.current] = self.frame_pointer[self.current - 1]
 
-    def store_heatmap(self, position=None):
-        if position is None:
-            position = self.current
-        if self.heatmap_state[position] == "changed":
+    def store_heatmap(self):
+        if self.heatmap_state[self.current] == "changed":
             try:
-                self.heatmap[position] = self.heatmap_queue.get(False)
+                heatmap_timeout = 1
+                self.heatmap[self.current] = self.generator_heatmap_queue.get(block=True,timeout=heatmap_timeout)
             except multiprocessing.queues.Empty:
-                self.heatmap_state[position] = "ignore"
-                self.heatmap_pointer[position] = self.heatmap_pointer[position - 1]
+                self.heatmap_state[self.current] = "ignore"
+                self.heatmap_pointer[self.current] = self.heatmap_pointer[self.current - 1]
             else:
-                self.heatmap_pointer[position] = position
-        elif self.heatmap_state[position] == "unchanged":
-            self.heatmap_pointer[position] = self.heatmap_pointer[position - 1]
-        elif self.heatmap_state[position] == "dropped":
-            self.heatmap_pointer[position] = self.heatmap_pointer[position - 1]
-        elif self.heatmap_state[position] == "ignored":
-            self.heatmap_pointer[position] = self.heatmap_pointer[position - 1]
+                self.heatmap_pointer[self.current] = self.current
+        elif self.heatmap_state[self.current] == "unchanged":
+            self.heatmap_pointer[self.current] = self.heatmap_pointer[self.current - 1]
+        elif self.heatmap_state[self.current] == "dropped":
+            self.heatmap_pointer[self.current] = self.heatmap_pointer[self.current - 1]
+        elif self.heatmap_state[self.current] == "ignored":
+            self.heatmap_pointer[self.current] = self.heatmap_pointer[self.current - 1]
+
+    def write_frame(self):
+        pass
 
     def draw_live_frame(self):
-
         if self.presentation_mode == "live" and self.window_id is not None:
             pass
 
-        self.window.frame_queue.put(self.frame[self.frame_pointer[-1]])
-        self.window.heatmap_queue.put(self.heatmap[self.heatmap_pointer[-1]])
+        self.draw_frame_queue.put(self.frame[self.frame_pointer[-1]])
+        self.draw_heatmap_queue.put(self.heatmap[self.heatmap_pointer[-1]])
+
+    def draw_playback_frame(self):
+        pass
 
 # noinspection PyAttributeOutsideInit
 class FrameGenerators:
@@ -155,9 +224,9 @@ class FrameGenerators:
         self.heatmap = [[], []]
         self.heatmap_state = None
 
-
     # noinspection PyAttributeOutsideInit
-    def runner(self, command, interval, start, precision, frame_queue, heatmap_queue, state_queue, instruction_queue):
+    def controller(self, command, interval, start, precision, frame_queue, heatmap_queue, state_queue,
+                   instruction_queue, controller_instruction_queue):
         self.command = command
         self.interval = interval
         self.start = start
@@ -165,31 +234,49 @@ class FrameGenerators:
         self.frame_queue = frame_queue
         self.heatmap_queue = heatmap_queue
         self.state_queue = state_queue
-        self.instrucion_queue = instruction_queue
-        self.id = str(timeit.default_timer())
+        self.instruction_queue = instruction_queue
+        self.controller_instruction_queue = controller_instruction_queue
+        self.instruction = None
 
-        self.key_time = start if precision is True else None
+        #self.key_time = start if precision is True else 0
+        self.key_time = start
         self.run_time = None
         self.completion_time = None
         self.current = 0
         self.last = 1
         self.first_run = True
         self.state = None
+        self.dont_wait_gap = .008
 
         while True:
-            instruction = None
+            current_time = timeit.default_timer()
+            instruction_timeout = max((self.key_time - self.dont_wait_gap) - current_time, 0)
+            Settings.debug("instruction timeout: " + str(instruction_timeout))
+
             try:
-                instruction = instruction_queue.get(False)
+                self.instruction = instruction_queue.get(timeout=instruction_timeout)
             except multiprocessing.queues.Empty:
                 pass
-            if instruction == "done":
-                break
-            self.frame_generator(first_run=self.first_run)
-            self.heatmap_generator(first_run=self.first_run)
+            else:
+                if self.instruction == "done":
+                    break
+
+            Settings.debug("starting frame generator: ")
+            self.frame_generator()
+            Settings.debug("starting heatmap generator: ")
+            self.heatmap_generator()
+            Settings.debug("starting put_queues generator: ")
             self.put_queues()
+            Settings.debug("ending put_queues generator: ")
+
             self.first_run = False
+            if self.precision is True:
+                self.key_time = self.key_time + self.interval
+            else:
+                self.key_time = current_time + self.interval
 
     def put_queues(self):
+        Settings.debug("q1")
         if self.heatmap_state == "changed":
             self.heatmap_queue.put(self.heatmap[self.current])
         elif self.heatmap_state == "dropped":
@@ -198,6 +285,7 @@ class FrameGenerators:
             pass
         elif self.heatmap_state == "unchanged":
             pass
+        Settings.debug("q2")
 
         if self.frame_state == "changed":
             self.frame_queue.put(self.frame[self.current])
@@ -213,6 +301,9 @@ class FrameGenerators:
             self.run_time,
             self.completion_time
         ))
+        #time.sleep(.0001)
+
+        self.controller_instruction_queue.put("generator")
 
     def flip_pointers(self):
         self.current = 1 if self.current == 0 else 0
@@ -221,26 +312,18 @@ class FrameGenerators:
     # self.key_time = self.key_time * int((current_time - key_time) / self.interval) * self.interval
 
     # noinspection PyShadowingNames
-    def frame_generator(self, first_run=False):
+    def frame_generator(self):
         """ create a new frame. a frame is composed of a line by line list of the output from
             the assigned command for this window """
 
-        if first_run is True:
-            # first time run
-            result, error, self.run_time, self.completion_time = run_linux(self.command)
-            self.run_time = 0
-            self.frame_state = "changed"
-        elif self.precision is True:
-            self.key_time = self.key_time + self.interval
-            result, error, self.run_time, self.completion_time = run_linux(self.command, self.key_time)
-            if error == "internal error: time out":
-                self.frame_state = "dropped"
+        result, error, self.run_time, self.completion_time = self.run_command()
+        #print("aa" + str(self.frame[self.current]))
+        #print("key1:" + str(self.key_time))
+        if self.precision is True:
             if self.completion_time > self.key_time + self.interval:
                 self.frame_state = "dropped"
-        else:
-            current_time = timeit.default_timer()
-            self.key_time = current_time + self.interval
-            result, error, self.run_time, self.completion_time = run_linux(self.command, self.key_time)
+        if self.frame_state == "dropped":
+            return
 
         # break result into a line by line list
         try:
@@ -248,14 +331,18 @@ class FrameGenerators:
         except AttributeError:
             self.frame[self.current] = str(result).splitlines()
 
-        if self.frame[self.current] == self.frame[self.last]:
+        if self.first_run is True:
+            # first time run
+            self.frame_state = "changed"
+        elif self.frame[self.current] == self.frame[self.last]:
             # no change from last one
             self.frame_state = "unchanged"
         else:
             # frame is different then the last one
             self.frame_state = "changed"
 
-    def heatmap_generator(self, first_run=False, ignore=None):
+
+    def heatmap_generator(self, ignore=None):
         """ create a new heatmap frame. a heatmap frame is composed of a line by line list of digits indicating the
             difference between each character in this frame versus the last frame.
                 0  = no change ever
@@ -265,7 +352,7 @@ class FrameGenerators:
         current = self.current
         last = self.last
 
-        if first_run is True:
+        if self.first_run is True:
             # first frame, so build a new heatmap of all 0s
             self.heatmap_state = "changed"
             self.heatmap[current] = []
@@ -332,53 +419,43 @@ class FrameGenerators:
         values.append(max_length)
         return values
 
-class Windows:
-    instances = []
 
-    def __init__(self):
-        self.v_position = 0
-        self.h_postion = 0
-        self.heigth = 0
-        self.width = 0
+    def run_command(self):
+        current_time = timeit.default_timer()
+        sleep_time = max(self.key_time - current_time, 0)
+        if self.precision is True and self.first_run is False:
+            #sleep_time = 0
+            if sleep_time == 0:
+                self.frame_state = "dropped"
+                return None, None, current_time, current_time
+        time.sleep(sleep_time)
 
-        self.command_id = 0
+        run_time = timeit.default_timer()
+        result, error = subprocess.Popen(
+            self.command,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            shell=True
+        ).communicate()
+        completion_time = timeit.default_timer()
 
-        self.window = curses.newwin(self.heigth, self.width, self.v_position, self.h_postion)
+        return result, error, run_time, completion_time
 
-        self.frame_queue = multiprocessing.Queue(1)
-        self.heatmap_queue = multiprocessing.Queue(1)
-        self.instruction_queue = multiprocessing.Queue(1)
-        self.process_draw_window = multiprocessing.Process(
-            target=draw_window,
-            args=(
-                self.window,
-                self.frame_queue,
-                self.heatmap_queue,
-                self.instruction_queue
-            ))
 
-        Windows.instances.append(self)
-        self.window_id = len(Windows.instances) - 1
-
-    def start_draw_window(self):
-        self.process_draw_window.start()
-
-    def terminate_draw_window(self):
-        print(self.process_draw_window)
-        self.process_draw_window.terminate()
-
-def draw_window(window, frame_queue, heatmap_queue, geometry="window", custom_height=9999, custom_width=9999):
-
-    if Settings.curses is False:
-        subprocess.Popen("clear").communicate()
-        print("\n".join(frame_queue))
-        print("\n".join(heatmap_queue))
-        return
+def draw_window(window, frame_queue, heatmap_queue, instruction_queue, controller_instruction_queue):
 
     custom_height = 9999
     custom_width = 9999
 
     while True:
+        if Settings.curses is False:
+            frame = frame_queue.get()
+            heatmap = heatmap_queue.get()
+            #subprocess.Popen("clear").communicate()
+            print("\n".join(frame))
+            print("\n".join(heatmap))
+            continue
+
         frame = frame_queue.get()
         heatmap = heatmap_queue.get()
 
@@ -466,10 +543,8 @@ def start_curses():
 
 
 def terminate_program():
-    for frame in FrameStorage.instances:
-        frame.terminate_generator()
-    for window in Windows.instances:
-        window.terminate_draw_window()
+    for queue in Main.instruction_queues:
+        queue.put("terminate")
 
     if Settings.curses is False:
         return
@@ -480,9 +555,11 @@ def terminate_program():
     curses.endwin()
 
 class Settings:
-    duration = 12
-    curses = False
+    duration = 49
     curses = True
+    curses = False
+    debug_mode = False
+    debug_mode = True
     start = None
     stop = None
     start_all = None
@@ -499,16 +576,23 @@ class Settings:
     commands_count = len(commands)
     intervals = [1] * commands_count
     precision = [True] * commands_count
-    min_intervals = min(intervals)
-    min_space = .0033
-    max_space = .1
-    spacer = min( max(min_intervals * .1, min_space), max_space)
+    controller_sleep = .01
     cooldown_ticks = 4
     cooldown_color_map = [0, 1] + ([2] * (cooldown_ticks + 1))
-
     windows_count = 1
 
-def controller():
+    @classmethod
+    def debug(cls, item):
+        if Settings.debug_mode is True:
+            print(item)
+
+
+class Main:
+    instruction_queues = []
+    system_queues = []
+    process_frame_controllers = []
+
+def main_controller():
     if Settings.curses:
         stdscr = start_curses()
         curses.start_color()
@@ -521,49 +605,36 @@ def controller():
     Settings.start_all = [Settings.start] * Settings.commands_count
     Settings.key = Settings.start
 
-    frames = []
+    #def controller(self, command, interval, start, precision, instruction_queue, system_queue):
+    frame_controller_seed = FrameController()
     for x in range(Settings.commands_count):
-        frames.append("")
-        frames[x] = FrameStorage(
-            Settings.commands[x],
-            Settings.intervals[x],
-            Settings.start_all[x],
-            Settings.precision[x]
-        )
+        Main.instruction_queues.append("")
+        Main.system_queues.append("")
+        Main.process_frame_controllers.append("")
+
+        Main.instruction_queues[x] = multiprocessing.Queue(1)
+        Main.system_queues[x] = multiprocessing.Queue(1)
+        Main.process_frame_controllers[x] = multiprocessing.Process(
+            target=frame_controller_seed.controller,
+            args=(
+                Settings.commands[x],
+                Settings.intervals[x],
+                Settings.start_all[x],
+                Settings.precision[x],
+                Main.instruction_queues[x],
+                Main.system_queues[x]
+            ))
     for x in range(Settings.commands_count):
-        frames[x].start_generator()
+        Main.process_frame_controllers[x].start()
 
-    windows = []
-    for x in range(Settings.windows_count):
-        windows.append("")
-        windows[x] = Windows()
-        windows[x].start_draw_window()
-        frames[x].window_id = x
-        frames[x].window = windows[x]
-
-
-    while True:
-        for x in range(Settings.commands_count):
-            if frames[x].get_state() is True:
-                frames[x].store_frame()
-                frames[x].store_heatmap()
-                frames[x].draw_live_frame()
-                frames[x].new_frame()
-        time.sleep(Settings.spacer)
-        current_time = timeit.default_timer()
-        if current_time > Settings.stop:
-            break
-
-    Settings.stop = timeit.default_timer()
-    Settings.diff = Settings.start - Settings.stop
-
+    time.sleep(Settings.stop - Settings.start)
 
 if __name__ == "__main__":
 
     # noinspection PyPep8
     try:
         error = False
-        controller()
+        main_controller()
 
     except:
         error = True
@@ -575,3 +646,4 @@ if __name__ == "__main__":
     if Settings.curses is True:
         if curses.isendwin() is not True:
             terminate_program()
+
