@@ -3,13 +3,12 @@
 # -*- encoding: utf8 -*-
 
 import os
-import threading
 import sys
-import subprocess
 import curses
-import time
+import subprocess
 import multiprocessing
-import multiprocessing.sharedctypes as mps
+import threading
+import time
 import timeit
 
 
@@ -31,7 +30,6 @@ class FrameController:
         self.heatmap_pointer = []
         self.heatmap_state = []
         self.current = 0
-        #self.new_frame()
 
         # window fields
         self.window = None
@@ -52,7 +50,6 @@ class FrameController:
         self.generator_heatmap_queue = multiprocessing.Queue(1)
         self.generator_state_queue = multiprocessing.Queue(1)
         self.generator_instruction_queue = multiprocessing.Queue(1)
-        self.generator_command_gpid = multiprocessing.Value("i",0,lock=False)
         self.process_generator = multiprocessing.Process(
             target=self.generator_seed.controller,
             args=(
@@ -64,8 +61,7 @@ class FrameController:
                 self.generator_heatmap_queue,
                 self.generator_state_queue,
                 self.generator_instruction_queue,
-                self.controller_instruction_queue,
-                self.generator_command_gpid
+                self.controller_instruction_queue
             ))
 
     def initialize_draw_window_subprocess(self):
@@ -93,26 +89,6 @@ class FrameController:
         self.process_generator.start()
         self.process_draw_window.start()
 
-    def terminate_subprocesses(self):
-        Settings.debug("pgid: " + str(self.generator_command_gpid.value))
-        Settings.debug("t1")
-        terminate_signal = 15
-        Settings.debug("pgid: " + str(self.generator_command_gpid.value))
-        if self.generator_command_gpid.value != 0:
-            Settings.debug("t2")
-            os.killpg(os.getpgid(self.generator_command_gpid.value), terminate_signal)
-            Settings.debug("t3")
-        Settings.debug("t4")
-        self.generator_instruction_queue.put("terminate")
-        Settings.debug("t5")
-        self.draw_instruction_queue.put("terminate")
-        Settings.debug("t6")
-        time_delay = .1
-        time.sleep(time_delay)
-        self.process_generator.terminate()
-        self.process_draw_window.terminate()
-        Settings.debug("t7")
-
     def controller(self, command, interval, start, precision, instruction_queue, system_queue):
         self.command = command
         self.interval = interval
@@ -131,26 +107,39 @@ class FrameController:
         self.initialize_subprocesses()
         self.start_subprocesses()
 
-        while True:
-            self.controller_instruction = self.controller_instruction_queue.get()
-            if self.controller_instruction == "terminate":
-                self.terminate_subprocesses()
-                break
-            if self.controller_instruction == "generator":
-                Settings.debug("c1")
-                if self.get_frame_state() is True:
-                    Settings.debug("c2")
-                    self.store_frame()
-                    Settings.debug("c3")
-                    self.store_heatmap()
-                    Settings.debug("c4")
-                    self.write_frame()
-                    if self.presentation_mode == "live":
-                        self.draw_live_frame()
-                    if self.presentation_mode == "playback":
-                        pass
-                Settings.debug("c5")
-            Settings.debug("c6")
+        try:
+            while True:
+                self.controller_instruction = self.controller_instruction_queue.get()
+                if self.controller_instruction == "generator":
+                    Settings.debug("c1")
+                    if self.get_frame_state() is True:
+                        Settings.debug("c2")
+                        self.store_frame()
+                        Settings.debug("c3")
+                        self.store_heatmap()
+                        Settings.debug("c4")
+                        self.write_frame()
+                        if self.presentation_mode == "live":
+                            self.draw_live_frame()
+                        if self.presentation_mode == "playback":
+                            pass
+                    Settings.debug("c5")
+                Settings.debug("c6")
+
+        except KeyboardInterrupt:
+            self.terminate_subprocesses()
+
+    def terminate_subprocesses(self):
+        time.sleep(.05)
+        term_sig = 2
+        if self.process_generator.exitcode is None:
+            os.kill(self.process_generator.pid, term_sig)
+        if self.process_draw_window.exitcode is None:
+            os.kill(self.process_draw_window.pid, term_sig)
+        time.sleep(.1)
+        self.process_generator.terminate()
+        self.process_draw_window.terminate()
+
 
     def get_key_press(self):
         return False
@@ -192,6 +181,7 @@ class FrameController:
                 frame_timeout = 1
                 self.frame[self.current] = self.generator_frame_queue.get(block=True,timeout=frame_timeout)
             except multiprocessing.queues.Empty:
+                Settings.debug("dropped in frame")
                 self.frame_state[self.current] = "dropped"
                 self.heatmap_state[self.current] = "dropped"
             else:
@@ -237,12 +227,12 @@ class FrameController:
         Settings.debug("dl3")
         Settings.debug("dl3framestate:" + str(self.frame_state[:]))
         Settings.debug("dl3framepointer:" + str(self.frame_pointer[:]))
-        Settings.debug("dl3frameall:" + str(self.frame[:]))
-        Settings.debug("dl3frame:" + str(self.frame[self.frame_pointer[-1]]))
+        #Settings.debug("dl3frameall:" + str(self.frame[:]))
+        #Settings.debug("dl3frame:" + str(self.frame[self.frame_pointer[-1]]))
         Settings.debug("dl3state:" + str(self.heatmap_state[:]))
         Settings.debug("dl3pointer:" + str(self.heatmap_pointer[:]))
-        Settings.debug("dl3all:" + str(self.heatmap[:]))
-        Settings.debug("dl3:" + str(self.heatmap[self.heatmap_pointer[-1]]))
+        #Settings.debug("dl3all:" + str(self.heatmap[:]))
+        #Settings.debug("dl3:" + str(self.heatmap[self.heatmap_pointer[-1]]))
         #self.draw_heatmap_queue.put(self.heatmap[self.heatmap_pointer[-1]])
         self.draw_heatmap_queue.put(self.heatmap[self.heatmap_pointer[-1]])
 
@@ -251,55 +241,59 @@ class FrameController:
 
 def draw_window(window, frame_queue, heatmap_queue, instruction_queue, controller_instruction_queue):
 
-    custom_height = 9999
-    custom_width = 9999
+    try:
+        custom_height = 9999
+        custom_width = 9999
 
-    while True:
-        instruction = instruction_queue.get()
-        Settings.debug("d1")
-        if instruction == "terminate":
-            Settings.debug("dd")
-            break
+        while True:
+            instruction = instruction_queue.get()
+            Settings.debug("d1")
+            if instruction == "terminate":
+                Settings.debug("dd")
+                break
 
-        if Settings.curses is False:
-            Settings.debug("d2")
+            if Settings.curses is False:
+                Settings.debug("d2")
+                frame = frame_queue.get()
+                Settings.debug("d3")
+                heatmap = heatmap_queue.get()
+                Settings.debug("d4")
+                #subprocess.Popen("clear").communicate()
+                #print("\n".join(frame))
+                #print("\n".join(heatmap))
+                continue
+
             frame = frame_queue.get()
-            Settings.debug("d3")
             heatmap = heatmap_queue.get()
-            Settings.debug("d4")
-            #subprocess.Popen("clear").communicate()
-            print("\n".join(frame))
-            print("\n".join(heatmap))
-            continue
 
-        frame = frame_queue.get()
-        heatmap = heatmap_queue.get()
+            window.clear()
 
-        window.clear()
+            terminal_height, terminal_width = window.getmaxyx()
 
-        terminal_height, terminal_width = window.getmaxyx()
+            #if geometry == "window":
+            draw_height = min(len(frame), terminal_height - 1, custom_height - 1)
+            width = min(terminal_width, custom_width)
 
-        #if geometry == "window":
-        draw_height = min(len(frame), terminal_height - 1, custom_height - 1)
-        width = min(terminal_width, custom_width)
+            for line in range(draw_height):
+                #frame[line], heatmap[line], max_char = self.equalize_lengths(" ", frame[line], heatmap[line])
+                #heatmap = heatmap.replace(" ", "0")
 
-        for line in range(draw_height):
-            #frame[line], heatmap[line], max_char = self.equalize_lengths(" ", frame[line], heatmap[line])
-            #heatmap = heatmap.replace(" ", "0")
+                draw_width = min(len(frame[line]), width)
 
-            draw_width = min(len(frame[line]), width)
+                for column in range(draw_width):
+                    try:
+                        char = str(frame[line][column])
+                    except IndexError:
+                        char = "?"
+                    try:
+                        color_pair = curses.color_pair(Settings.cooldown_color_map[int("0" + heatmap[line][column])])
+                    except IndexError:
+                        color_pair = 0
+                    window.addstr(line, column, char, color_pair)
+            window.refresh()
 
-            for column in range(draw_width):
-                try:
-                    char = str(frame[line][column])
-                except IndexError:
-                    char = "?"
-                try:
-                    color_pair = curses.color_pair(Settings.cooldown_color_map[int("0" + heatmap[line][column])])
-                except IndexError:
-                    color_pair = 0
-                window.addstr(line, column, char, color_pair)
-        window.refresh()
+    except KeyboardInterrupt:
+        pass
 
 # noinspection PyAttributeOutsideInit
 class FrameGenerators:
@@ -320,7 +314,7 @@ class FrameGenerators:
 
     # noinspection PyAttributeOutsideInit
     def controller(self, command, interval, start, precision, frame_queue, heatmap_queue, state_queue,
-                   instruction_queue, controller_instruction_queue, command_gpid):
+                   instruction_queue, controller_instruction_queue):
         self.command = command
         self.interval = interval
         self.start = start
@@ -330,7 +324,7 @@ class FrameGenerators:
         self.state_queue = state_queue
         self.instruction_queue = instruction_queue
         self.controller_instruction_queue = controller_instruction_queue
-        self.command_gpid = command_gpid
+        self.command_gid = None
         self.instruction = None
 
         #self.key_time = start if precision is True else 0
@@ -344,44 +338,52 @@ class FrameGenerators:
         self.dont_wait_gap = .008
 
         current_time = timeit.default_timer()
-        while True:
-            sleep_time = max(self.key_time - current_time, 0)
+        try:
+            while True:
+                sleep_time = max(self.key_time - current_time, 0)
 
-            try:
-                self.instruction = instruction_queue.get(timeout=sleep_time)
-            except multiprocessing.queues.Empty:
-                pass
-            else:
-                if self.instruction == "terminate":
-                    Settings.debug("subprocess terminate!")
-                    break
+                try:
+                    self.instruction = instruction_queue.get(timeout=sleep_time)
+                except multiprocessing.queues.Empty:
+                    pass
+                else:
+                    if self.instruction == "terminate":
+                        Settings.debug("subprocess terminate!")
+                        break
 
-            if self.precision is True and self.first_run is False and sleep_time == 0:
-                self.dropped()
-                Settings.debug("dropped in generator 1")
-            else:
-                Settings.debug("starting frame generator: ")
-                self.frame_generator()
-                if self.frame_state != "dropped":
-                    Settings.debug("starting heatmap generator: ")
-                    self.heatmap_generator()
+                if self.precision is True and self.first_run is False and sleep_time == 0:
+                    self.dropped()
+                    Settings.debug("dropped in generator 1")
+                else:
+                    Settings.debug("starting frame generator: ")
+                    self.frame_generator()
+                    if self.frame_state != "dropped":
+                        Settings.debug("starting heatmap generator: ")
+                        self.heatmap_generator()
 
-            Settings.debug("starting put_queues generator: ")
-            self.put_queues()
-            Settings.debug("ending put_queues generator: ")
+                Settings.debug("starting put_queues generator: ")
+                self.put_queues()
+                Settings.debug("ending put_queues generator: ")
 
-            self.first_run = False
-            self.frame_state = None
-            self.heatmap_state = None
+                self.first_run = False
+                self.frame_state = None
+                self.heatmap_state = None
 
-            current_time = timeit.default_timer()
-            if self.precision is True:
-                self.key_time = self.key_time + self.interval
-            else:
-                self.key_time = current_time + self.interval
+                current_time = timeit.default_timer()
+                if self.precision is True:
+                    self.key_time = self.key_time + self.interval
+                else:
+                    self.key_time = current_time + self.interval
+
+        except KeyboardInterrupt:
+            if self.command_gid != 0:
+                Settings.debug("gggggt2")
+                term_sig = 15
+                os.killpg(os.getpgid(self.command_gid), term_sig)
+            pass
 
     def dropped(self, run_time=None, completion_time=None):
-        self.command_gpid.value = 0
+        self.command_gid = 0
         self.frame_state = "dropped"
         self.heatmap_state = "dropped"
         current_time = timeit.default_timer()
@@ -390,7 +392,7 @@ class FrameGenerators:
 
     def put_queues(self):
         Settings.debug("q1")
-        Settings.debug("gen command_gpid: " + str(self.command_gpid.value))
+        Settings.debug("gen command_gid: " + str(self.command_gid))
         if self.heatmap_state == "changed":
             Settings.debug("q1.1")
             self.heatmap_queue.put(self.heatmap[self.current])
@@ -420,7 +422,6 @@ class FrameGenerators:
             self.completion_time
         ))
         Settings.debug("q4")
-        #time.sleep(.0001)
 
         self.controller_instruction_queue.put("generator")
 
@@ -430,39 +431,53 @@ class FrameGenerators:
 
     # self.key_time = self.key_time * int((current_time - key_time) / self.interval) * self.interval
 
+    def terminate_gid(self, gid):
+        term_sig = 15
+        os.killpg(gid, term_sig)
+        self.frame_state = "dropped"
+
     # noinspection PyShadowingNames
     def frame_generator(self):
         """ create a new frame. a frame is composed of a line by line list of the output from
             the assigned command for this window """
 
         self.run_time = timeit.default_timer()
-        p = subprocess.Popen(
+        proc = subprocess.Popen(
             self.command,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             shell=True,
             preexec_fn=os.setsid
         )
-        self.command_gpid.value = os.getpgid(p.pid)
-        Settings.debug("gen command_gpid: " + str(self.command_gpid.value))
+        gid = os.getpgid(proc.pid)
+        self.command_gid = gid
+        Settings.debug("gen command_gid: " + str(self.command_gid))
+
 
         if self.precision is True:
-            safe_margin = .02
-            interval = .005
-            terminate_signal = 15
-            end = self.key_time - safe_margin
-            while True:
-                time.sleep(interval)
-                if p.poll() is not None:
-                    break
-                elif timeit.default_timer() > end:
-                    os.killpg(os.getpgid(p.pid), terminate_signal)
-                    self.dropped(self.run_time)
-                    return
+            #term_sig = 15
+            #dropped = [False]
+            #terminate_gid = lambda gid, term_sig, drop: os.killpg(gid, term_sig) and drop.__setitem__(0,True)
 
-        self.command_gpid.value = 0
+            safe_margin = .02
+            end_timer = ((self.key_time + self.interval) - safe_margin) - self.run_time
+            Settings.debug("timer: " + str(end_timer))
+
+            #timer = threading.Timer(end_timer, terminate_gid, [gid, term_sig, dropped])
+            timer = threading.Timer(end_timer, self.terminate_gid, args=(gid,))
+            timer.start()
+
+            result, error = proc.communicate()
+            timer.cancel()
+
+            if self.frame_state == "dropped":
+                self.dropped(self.run_time)
+                return
+        else:
+            result, error = proc.communicate()
+
+        self.command_gid = 0
         self.completion_time = timeit.default_timer()
-        result, error = p.communicate()
 
         # break result into a line by line list
         try:
@@ -581,12 +596,14 @@ def process_key(keystroke):
 
 
 def run_linux(command):
+    start = timeit.default_timer()
     result, error = subprocess.Popen(
         command,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         shell=True
         ).communicate()
+    print(str(timeit.default_timer() - start))
     return result, error
 
 def run_linux2(command):
@@ -610,7 +627,8 @@ def run_linux3(command):
     #timer.start()
     #timer.join(5)
 
-    end = timeit.default_timer() + 2 - .02
+    start = timeit.default_timer()
+    end = timeit.default_timer() + 4 - .02
     while True:
         time.sleep(.005)
         if p.poll() is not None:
@@ -619,7 +637,31 @@ def run_linux3(command):
         elif timeit.default_timer() > end:
             os.killpg(os.getpgid(p.pid), 15)
             break
+    #time.sleep(3)
+    #os.killpg(os.getpgid(p.pid), 15)
     result, error = p.communicate()
+    print(str(timeit.default_timer() - start))
+    return result, error
+
+def run_linux4(command):
+    start = timeit.default_timer()
+    p = subprocess.Popen(
+        command,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        shell=True
+        ,preexec_fn=os.setsid
+    )
+
+    pg = os.getpgid(p.pid)
+    tend = lambda pg: os.killpg(pg, 15)
+    end = 2
+
+    t = threading.Timer(6, tend, [pg])
+    t.start()
+    result, error = p.communicate()
+    t.cancel()
+    print(str(timeit.default_timer() - start))
     return result, error
 
 def curses_color_setup():
@@ -636,32 +678,37 @@ def start_curses():
     return stdscr
 
 
-def terminate_program():
-    for queue in Main.instruction_queues:
-        queue.put("terminate")
+def terminate_subprocesses():
+    time.sleep(.15)
+    for proc in Main.process_frame_controllers:
+        if proc.exitcode is None:
+            term_sig = 2
+            os.kill(proc.pid, term_sig)
+    time.sleep(.2)
+    for proc in Main.process_frame_controllers:
+        proc.terminate()
 
-    if Settings.curses is False:
-        return
 
+def terminate_curses():
     curses.echo()
     curses.nocbreak()
     curses.curs_set(1)
     curses.endwin()
 
 class Settings:
-    duration = 11
-    curses = False
+    duration = 4
     curses = True
-    debug_mode = True
+    curses = False
     debug_mode = False
+    debug_mode = True
     start = None
     stop = None
     start_all = None
     stop_all = None
     commands = [
-        #'date'
-        'date; sleep 22; sleep 11; date'
-    ]
+        'dmesg;date +%N'
+        ]
+    #     'date; sleep 22; sleep 11; date',
     # 'echo "abcgxz abc \n123456\n7890 !@#$&^"',
     # 'python -c "import timeit; print(str(timeit.default_timer()))"',
     # 'date',
@@ -669,7 +716,7 @@ class Settings:
     # './test.sh',
     # 'dmesg' ]
     commands_count = len(commands)
-    intervals = [1] * commands_count
+    intervals = [.1] * commands_count
     precision = [True] * commands_count
     cooldown_ticks = 4
     cooldown_color_map = [0, 1] + ([2] * (cooldown_ticks + 1))
@@ -699,9 +746,11 @@ def main_controller():
     Settings.start_all = [Settings.start] * Settings.commands_count
     Settings.key = Settings.start
 
-    #def controller(self, command, interval, start, precision, instruction_queue, system_queue):
     frame_controller_seed = FrameController()
     for x in range(Settings.commands_count):
+        # result, error = run_linux4(Settings.commands[x])
+        # print(len(result))
+        # sys.exit()
 
         Main.instruction_queues.append("")
         Main.system_queues.append("")
@@ -719,32 +768,30 @@ def main_controller():
                 Main.instruction_queues[x],
                 Main.system_queues[x]
             ))
+
     for x in range(Settings.commands_count):
         Main.process_frame_controllers[x].start()
 
     time.sleep(Settings.stop - Settings.start)
-    sys.exit()
+
 
 if __name__ == "__main__":
 
     # noinspection PyPep8
+    terminate = True
     try:
-        error = False
         main_controller()
-
+        time.sleep("dd")
     except KeyboardInterrupt:
-        sys.exit()
-    except:
-        error = True
-        terminate_program()
-        raise
+        print("")
+        terminate = False
+    finally:
+        if terminate is True:
+            terminate_subprocesses()
+        if Settings.curses is True:
+            terminate_curses()
 
-    terminate_program()
-
-    if Settings.curses is True:
-        if curses.isendwin() is not True:
-            terminate_program()
-
+        #curses.isendwin() is not True:
         # filename = "/tmp/watchp" + str(x) + ".tmp"
         # with open(filename, "w") as f:
         #     f.write("#!/bin/sh\n")
