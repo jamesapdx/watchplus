@@ -12,13 +12,41 @@ import time
 import timeit
 
 
-class FrameController:
+# ======================================================================================================================
+#   Classes
+# ======================================================================================================================
+
+class FrameControllers:
+    """This is the main controlling class.
+
+    Frames are merely the collection of the stdout (or stderr) of the target command or script. If the target command
+    or script is run every second for 10 seconds, 10 frames (outputs) will be generated and stored.  Heatmaps are
+    numerical representation for the change state of each character in a frame, it's the highlighting that occurs when
+    a character changes from one frame to the next.  See the FrameGenerators class for more details.
+
+    This class is utilized inside a multiprocess subprocess, one subprocess for each target command or script.  Think
+    of this as the brains for each of the watch's target commands - it controls the input, storage, and output for
+    each target command or script.
+
+    Class data can only be accessed from within the subprocess, multiprocess queues are utilized to share data between
+    processes.
+
+    Methods and fields in this class do the following:
+        Starts child subprocesses, including:
+            generator controller - as a method of an isolated FrameGenerators class instance
+            draw window - as a function
+        Receives frame and heatmap data from the generator subprocess via a queue
+        Stores all frame and heatmap data
+        Pushes the frame and heatmap data to the draw window via a queue
+    """
     instances = []
 
     def __init__(self):
+        """ As this class is isolated in a multiprocess process, most fields are initialized in the controller
+        class"""
         # class fields
-        FrameController.instances.append(self)
-        self.command_id = len(FrameController.instances) - 1
+        FrameControllers.instances.append(self)
+        self.command_id = len(FrameControllers.instances) - 1
 
         # frame storage fields
         self.frame = []
@@ -43,9 +71,6 @@ class FrameController:
         self.y_position = 0
 
     def initialize_generator_childprocess(self):
-        #self.cooldown_ticks = None
-        #self.cooldown_color_map = []
-
         self.generator_seed = FrameGenerators()
         self.generator_frame_queue = multiprocessing.Queue(1)
         self.generator_heatmap_queue = multiprocessing.Queue(1)
@@ -66,6 +91,7 @@ class FrameController:
             ))
 
     def initialize_draw_window_childprocess(self):
+        # create a new curses window
         self.window = None
         if Settings.curses is True:
             self.window = curses.newwin(self.heigth, self.width, self.v_position, self.h_position)
@@ -83,15 +109,28 @@ class FrameController:
                 self.draw_instruction_queue,
                 self.controller_instruction_queue
             ))
-    def initialize_childprocesses(self):
+
+    def initialize_all_childprocesses(self):
         self.initialize_generator_childprocess()
         self.initialize_draw_window_childprocess()
 
-    def start_childprocesses(self):
+    def start_all_childprocesses(self):
         self.process_generator.start()
         self.process_draw_window.start()
 
     def controller(self, command, interval, start, precision, instruction_queue, system_queue):
+        """ This is the main method that will control the input, output, and storage of the frame and heatmap data.
+        After initializing the fields, this method will simply wait for a the generator child subprocess to put a new
+        frame and heatmap into the appropriate queues, which are then sent on to the draw window and file write child
+        subprocesses.
+            generator child --["generator"]--> controller_instruction queue (let's us know a new frame is available)
+                generator child --[state]-->   |state_queue  | --> controller --> self.state
+                generator child --[frame]-->   |frame_queue  | --> controller --> self.frame
+                generator child --[heatmap]--> |heatmap_queue| --> controller --> self.heatmap
+                    ...
+                        controller --[frame]-->   |draw_frame_queue  | --> draw_window child
+                        controller --[heatmap]--> |draw_heatmap_queue| --> draw_window child
+        """
         self.command = command
         self.interval = interval
         self.start = start
@@ -106,8 +145,8 @@ class FrameController:
         # start sub-processes
         self.process_generator = None
         self.process_draw_window = None
-        self.initialize_childprocesses()
-        self.start_childprocesses()
+        self.initialize_all_childprocesses()
+        self.start_all_childprocesses()
 
         try:
             while True:
@@ -285,6 +324,9 @@ def draw_window(window, frame_queue, heatmap_queue, instruction_queue, controlle
                     window.addstr(line, column, char, color_pair)
             window.refresh()
 
+    except KeyboardInterrupt:
+        pass
+
 
 def key_press(window, system_queue):
     try:
@@ -293,6 +335,7 @@ def key_press(window, system_queue):
             system_queue.put(keystroke)
     except KeyboardInterrupt:
         pass
+    return
 
 
 # noinspection PyAttributeOutsideInit
@@ -668,8 +711,8 @@ class Settings:
     duration = 41
     curses = True
     curses = False
-    debug_mode = False
     debug_mode = True
+    debug_mode = False
     start = None
     stop = None
     start_all = None
@@ -722,7 +765,7 @@ def main_controller():
     Settings.key = Settings.start
 
     Main.system_queue = multiprocessing.Queue(1)
-    frame_controller_seed = FrameController()
+    frame_controller_seed = FrameControllers()
     for x in range(Settings.commands_count):
         # result, error = run_linux4(Settings.commands[x])
         # print(len(result))
@@ -756,7 +799,7 @@ if __name__ == "__main__":
     terminate = True
     try:
         main_controller()
-        time.sleep("dd")
+        #time.sleep("dd")
     except KeyboardInterrupt:
         print("")
         terminate = False
