@@ -11,9 +11,48 @@ import threading
 import time
 import timeit
 
+# ======================================================================================================================
+#   Settings
+# ======================================================================================================================
+
+class Settings:
+    duration = 41
+    curses = True
+    curses = False
+    debug_mode = True
+    debug_mode = False
+    start = None
+    stop = None
+    start_all = None
+    stop_all = None
+    commands = [
+        'dmesg;date +%N',
+        'date; sleep 22; sleep 11; date',
+        'echo "abcgxz abc \n123456\n7890 !@#$&^"',
+        'python -c "import timeit; print(str(timeit.default_timer()))"',
+        'date',
+        'date',
+        './test.sh',
+        'dmesg' ]
+    commands_count = len(commands)
+    intervals = [1] * commands_count
+    precision = [True] * commands_count
+    cooldown_ticks = 4
+    cooldown_color_map = [0, 1] + ([2] * (cooldown_ticks + 1))
+    windows_count = 1
+
+    @classmethod
+    def debug(cls, item):
+        if Settings.debug_mode is True:
+            print(item)
+
 
 # ======================================================================================================================
-#   Classes
+#   Arguments and flags
+# ======================================================================================================================
+
+# ======================================================================================================================
+#   Classes/methods that run as subprocesses
 # ======================================================================================================================
 
 class FrameControllers:
@@ -42,8 +81,8 @@ class FrameControllers:
     instances = []
 
     def __init__(self):
-        """ As this class is isolated in a multiprocess process, most fields are initialized in the controller
-        class"""
+        """ As this class will be isolated in a multiprocess process, most fields are initialized in the
+        self.controller() function"""
         # class fields
         FrameControllers.instances.append(self)
         self.command_id = len(FrameControllers.instances) - 1
@@ -58,17 +97,6 @@ class FrameControllers:
         self.heatmap_pointer = []
         self.heatmap_state = []
         self.current = 0
-
-        # window fields
-        self.window = None
-        self.window_id = None
-        self.key_press = None
-        self.heigth = 0
-        self.width = 0
-        self.v_position = 0
-        self.h_position = 0
-        self.x_position = 0
-        self.y_position = 0
 
     def initialize_generator_childprocess(self):
         self.generator_seed = FrameGenerators()
@@ -91,6 +119,17 @@ class FrameControllers:
             ))
 
     def initialize_draw_window_childprocess(self):
+        # window fields
+        self.window = None
+        self.window_id = None
+        self.key_press = None
+        self.heigth = 0
+        self.width = 0
+        self.v_position = 0
+        self.h_position = 0
+        self.x_position = 0
+        self.y_position = 0
+
         # create a new curses window
         self.window = None
         if Settings.curses is True:
@@ -122,7 +161,7 @@ class FrameControllers:
         """ This is the main method that will control the input, output, and storage of the frame and heatmap data.
         After initializing the fields, this method will simply wait for a the generator child subprocess to put a new
         frame and heatmap into the appropriate queues, which are then sent on to the draw window and file write child
-        subprocesses.
+        subprocesses. Note, all interval timing is done in the generator child subprocess.
             generator child --["generator"]--> controller_instruction queue (let's us know a new frame is available)
                 generator child --[state]-->   |state_queue  | --> controller --> self.state
                 generator child --[frame]-->   |frame_queue  | --> controller --> self.frame
@@ -150,15 +189,12 @@ class FrameControllers:
 
         try:
             while True:
+                # this controller queue get is blocking, so just wait for the a new frame or a message from key_press
                 self.controller_instruction = self.controller_instruction_queue.get()
                 if self.controller_instruction == "generator":
-                    Settings.debug("c1")
                     if self.get_frame_state() is True:
-                        Settings.debug("c2")
                         self.store_frame()
-                        Settings.debug("c3")
                         self.store_heatmap()
-                        Settings.debug("c4")
                         self.write_frame()
                         if self.presentation_mode == "live":
                             self.draw_live_frame()
@@ -167,20 +203,28 @@ class FrameControllers:
                 if self.controller_instruction == "key_press":
                     self.processes_key_press()
         except KeyboardInterrupt:
+            # the controller method runs as a separate process and is killed either by a ctrl-c or a term_sig 2
+            # poison pill / process.terminate is not used
             self.terminate_childprocesses()
 
     def terminate_childprocesses(self):
+        """ all child subprocoesses are killed with os - signal 2, not a flag or terminate.  This leads to a clean
+        stop with no error messages in the case of a user control-c. User control-c are propagated to all
+        subprocesses automatically on an OS level and are not controllable. """
+        # wait a tad to let the child processes stop on their own in the case of user control-c.
         time.sleep(.05)
         term_sig = 2
         if self.process_generator.exitcode is None:
             os.kill(self.process_generator.pid, term_sig)
         if self.process_draw_window.exitcode is None:
             os.kill(self.process_draw_window.pid, term_sig)
+        # just in case this doesn't work because of timing or otherwise, wait a bit and kill with process.terminate
         time.sleep(.1)
         self.process_generator.terminate()
         self.process_draw_window.terminate()
 
     def processes_key_press(self):
+        # DELETE, OBSOLETE
         keystroke = self.key_press_queue.get()
         keystroke = chr(keystroke)
         if keystroke == "1":
@@ -190,7 +234,9 @@ class FrameControllers:
         #elif keystroke == "q":
 
     def get_frame_state(self):
+        """ unload from the frame_state queue, this done before the frame and heatmap"""
         try:
+            # only give it 1 second to unload the queue, don't want to get stuck forever
             state_timeout = 1
             a, b, c, d = self.generator_state_queue.get(block=True,timeout=state_timeout)
         except multiprocessing.queues.Empty:
@@ -205,6 +251,7 @@ class FrameControllers:
             return True
 
     def new_frame(self):
+        """ frames and heatmaps are stored in lists, so just append a new blank element to the fields """
         self.frame.append("")
         self.frame_pointer.append("")
         self.frame_state.append("")
@@ -217,46 +264,51 @@ class FrameControllers:
         Settings.debug("self.current: " + str(self.current))
 
     def store_frame(self):
+        """ if the state is "changed", this function will try unload and store a single frame from the queue,
+        otherwise the pointer will simply be set to the previous frame"""
         if self.current == 0:
-            self.frame_pointer[self.current] = self.current
-        else:
-            self.frame_pointer[self.current] = self.frame_pointer[self.current - 1]
+            # first frame
+            self.frame_pointer[self.current] = 0
         if self.frame_state[self.current] == "changed":
             try:
                 frame_timeout = 1
                 self.frame[self.current] = self.generator_frame_queue.get(block=True,timeout=frame_timeout)
             except multiprocessing.queues.Empty:
+                # unable to get anything from the queue, just consider this an error and drop the frame
                 Settings.debug("dropped in frame")
                 self.frame_state[self.current] = "dropped"
                 self.heatmap_state[self.current] = "dropped"
+                self.frame_pointer[self.current] = self.frame_pointer[self.current - 1]
             else:
                 self.frame_pointer[self.current] = self.current
         elif self.frame_state[self.current] == "unchanged":
-            pass
+            self.frame_pointer[self.current] = self.frame_pointer[self.current - 1]
         elif self.frame_state[self.current] == "dropped":
+            self.frame_pointer[self.current] = self.frame_pointer[self.current - 1]
             Settings.debug("dropped")
-            pass
 
     def store_heatmap(self):
+        """ if the state is "changed", this function will try unload and store single a heatmap from the queue,
+        otherwise the pointer will simply be set to the previous heatmap"""
         if self.current == 0:
             self.heatmap_pointer[self.current] = self.current
-        else:
-            self.heatmap_pointer[self.current] = self.heatmap_pointer[self.current - 1]
         if self.heatmap_state[self.current] == "changed":
             try:
                 heatmap_timeout = 1
                 self.heatmap[self.current] = self.generator_heatmap_queue.get(block=True,timeout=heatmap_timeout)
             except multiprocessing.queues.Empty:
+                # unable to get anything from the queue, just consider this an error and ignore the heatmap
                 self.heatmap_state[self.current] = "ignore"
+                self.heatmap_pointer[self.current] = self.heatmap_pointer[self.current - 1]
             else:
                 self.heatmap_pointer[self.current] = self.current
         elif self.heatmap_state[self.current] == "unchanged":
-            pass
+            self.heatmap_pointer[self.current] = self.heatmap_pointer[self.current - 1]
         elif self.heatmap_state[self.current] == "dropped":
+            self.heatmap_pointer[self.current] = self.heatmap_pointer[self.current - 1]
             Settings.debug("dropped")
-            pass
         elif self.heatmap_state[self.current] == "ignored":
-            pass
+            self.heatmap_pointer[self.current] = self.heatmap_pointer[self.current - 1]
 
     def write_frame(self):
         pass
@@ -271,75 +323,11 @@ class FrameControllers:
     def draw_playback_frame(self):
         pass
 
-def draw_window(window, frame_queue, heatmap_queue, instruction_queue, controller_instruction_queue):
-
-    try:
-        custom_height = 9999
-        custom_width = 9999
-
-        while True:
-            instruction = instruction_queue.get()
-            Settings.debug("d1")
-            if instruction == "terminate":
-                Settings.debug("dd")
-                break
-
-            if Settings.curses is False:
-                Settings.debug("d2")
-                frame = frame_queue.get()
-                Settings.debug("d3")
-                heatmap = heatmap_queue.get()
-                Settings.debug("d4")
-                #subprocess.Popen("clear").communicate()
-                #print("\n".join(frame))
-                #print("\n".join(heatmap))
-                continue
-
-            frame = frame_queue.get()
-            heatmap = heatmap_queue.get()
-
-            window.clear()
-
-            terminal_height, terminal_width = window.getmaxyx()
-
-            #if geometry == "window":
-            draw_height = min(len(frame), terminal_height - 1, custom_height - 1)
-            width = min(terminal_width, custom_width)
-
-            for line in range(draw_height):
-                #frame[line], heatmap[line], max_char = self.equalize_lengths(" ", frame[line], heatmap[line])
-                #heatmap = heatmap.replace(" ", "0")
-
-                draw_width = min(len(frame[line]), width)
-
-                for column in range(draw_width):
-                    try:
-                        char = str(frame[line][column])
-                    except IndexError:
-                        char = "?"
-                    try:
-                        color_pair = curses.color_pair(Settings.cooldown_color_map[int("0" + heatmap[line][column])])
-                    except IndexError:
-                        color_pair = 0
-                    window.addstr(line, column, char, color_pair)
-            window.refresh()
-
-    except KeyboardInterrupt:
-        pass
-
-
-def key_press(window, system_queue):
-    try:
-        while True:
-            keystroke = window.getkey()
-            system_queue.put(keystroke)
-    except KeyboardInterrupt:
-        pass
-    return
 
 
 # noinspection PyAttributeOutsideInit
 class FrameGenerators:
+
 
     def __init__(self):
         self.creation_time = None
@@ -607,6 +595,95 @@ class FrameGenerators:
         values.append(max_length)
         return values
 
+
+# ======================================================================================================================
+#   Functions that run as subprocesses
+# ======================================================================================================================
+
+
+def draw_window(window, frame_queue, heatmap_queue, instruction_queue, controller_instruction_queue):
+    """ draw the most recent frame
+
+    :param window:
+    :param frame_queue:
+    :param heatmap_queue:
+    :param instruction_queue:
+    :param controller_instruction_queue:
+    :return:
+    """
+
+    try:
+        custom_height = 9999
+        custom_width = 9999
+
+        while True:
+            instruction = instruction_queue.get()
+            Settings.debug("d1")
+
+            if Settings.curses is False:
+                # don't use curses
+                Settings.debug("d2")
+                frame = frame_queue.get()
+                Settings.debug("d3")
+                heatmap = heatmap_queue.get()
+                Settings.debug("d4")
+                #subprocess.Popen("clear").communicate()
+                #print("\n".join(frame))
+                #print("\n".join(heatmap))
+                continue
+
+            frame = frame_queue.get()
+            heatmap = heatmap_queue.get()
+
+            window.clear()
+
+            terminal_height, terminal_width = window.getmaxyx()
+
+            #if geometry == "window":
+            draw_height = min(len(frame), terminal_height - 1, custom_height - 1)
+            width = min(terminal_width, custom_width)
+
+            for line in range(draw_height):
+                #frame[line], heatmap[line], max_char = self.equalize_lengths(" ", frame[line], heatmap[line])
+                #heatmap = heatmap.replace(" ", "0")
+
+                draw_width = min(len(frame[line]), width)
+
+                for column in range(draw_width):
+                    try:
+                        char = str(frame[line][column])
+                    except IndexError:
+                        char = "?"
+                    try:
+                        color_pair = curses.color_pair(Settings.cooldown_color_map[int("0" + heatmap[line][column])])
+                    except IndexError:
+                        color_pair = 0
+                    window.addstr(line, column, char, color_pair)
+            window.refresh()
+
+    except KeyboardInterrupt:
+        pass
+
+
+def key_controller(window, system_queue):
+    try:
+        while True:
+            keystroke = window.getkey()
+            keystroke = chr(keystroke)
+            if keystroke == "1":
+                draw_id.value = 1
+            elif keystroke == "2":
+                draw_id.value = 2
+    except KeyboardInterrupt:
+        pass
+
+
+
+# ======================================================================================================================
+#   Functions
+# ======================================================================================================================
+
+
 def run_linux(command):
     start = timeit.default_timer()
     result, error = subprocess.Popen(
@@ -707,36 +784,6 @@ def terminate_curses():
     curses.curs_set(1)
     curses.endwin()
 
-class Settings:
-    duration = 41
-    curses = True
-    curses = False
-    debug_mode = True
-    debug_mode = False
-    start = None
-    stop = None
-    start_all = None
-    stop_all = None
-    commands = [
-        'dmesg;date +%N',
-        'date; sleep 22; sleep 11; date',
-    'echo "abcgxz abc \n123456\n7890 !@#$&^"',
-    'python -c "import timeit; print(str(timeit.default_timer()))"',
-    'date',
-    'date',
-    './test.sh',
-    'dmesg' ]
-    commands_count = len(commands)
-    intervals = [1] * commands_count
-    precision = [True] * commands_count
-    cooldown_ticks = 4
-    cooldown_color_map = [0, 1] + ([2] * (cooldown_ticks + 1))
-    windows_count = 1
-
-    @classmethod
-    def debug(cls, item):
-        if Settings.debug_mode is True:
-            print(item)
 
 class Main:
     instruction_queues = []
