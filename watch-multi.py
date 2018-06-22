@@ -19,6 +19,7 @@ class Settings:
     duration = 41
     curses = False
     curses = True
+    debug_level = 0
     debug_mode = False
     debug_mode = True
     start = None
@@ -45,8 +46,8 @@ class Settings:
     draw_window_id = 0
 
     @classmethod
-    def debug(cls, item):
-        if Settings.debug_mode is True and Settings.curses is False:
+    def debug(cls, item, level=0):
+        if Settings.debug_mode is True and Settings.curses is False and Settings.debug_level >= level:
             print(item)
 
 # ======================================================================================================================
@@ -157,7 +158,7 @@ class FrameControllers:
         self.process_generator.start()
         self.process_draw_window.start()
 
-    def controller(self, command, interval, start, precision, window_id, draw_window_id, event_queue,
+    def frame_controller(self, command, interval, start, precision, window_id, draw_window_id, event_queue,
                    system_queue):
         """ This is the main method that will control the input, output, and storage of the frame and heatmap data.
         After initializing the fields, this method will simply wait for a the generator child subprocess to put a new
@@ -203,8 +204,8 @@ class FrameControllers:
                             self.draw_live_frame()
                         if self.presentation_mode == "playback":
                             pass
-                if self.event == "key_press":
-                    self.processes_key_press()
+                if self.event == "window":
+                    self.draw_window_id = self.system_queue.get()
         except KeyboardInterrupt:
             # the controller method runs as a separate process and is killed either by a ctrl-c or a term_sig 2
             # poison pill / process.terminate is not used
@@ -226,15 +227,6 @@ class FrameControllers:
         self.process_generator.terminate()
         self.process_draw_window.terminate()
 
-    def processes_key_press(self):
-        # DELETE, OBSOLETE
-        keystroke = self.key_press_queue.get()
-        keystroke = chr(keystroke)
-        if keystroke == "1":
-            draw_id.value = 1
-        elif keystroke == "2":
-            draw_id.value = 2
-        #elif keystroke == "q":
 
     def get_frame_state(self):
         """ unload from the frame_state queue, this done before the frame and heatmap"""
@@ -605,6 +597,36 @@ class FrameGenerators:
 # ======================================================================================================================
 
 
+def event_controller(window, draw_window_id, event_queues, system_queues):
+    Settings.debug("event start", 1)
+    try:
+        keystroke = "1"
+        while True:
+            if Settings.curses is True:
+                keystroke = window.getkey()
+                keystroke = chr(keystroke)
+            else:
+                time.sleep(2)
+                keystroke = "1" if keystroke == "2" else "2"
+
+            if keystroke == "1":
+                event_queues[draw_window_id].put("window")
+                system_queues[draw_window_id].put(1)
+                draw_window_id = 1
+                time.sleep(.1)
+                event_queues[draw_window_id].put("window")
+                system_queues[draw_window_id].put(draw_window_id)
+            elif keystroke == "2":
+                event_queues[draw_window_id].put("window")
+                system_queues[draw_window_id].put(2)
+                draw_window_id = 2
+                time.sleep(.1)
+                event_queues[draw_window_id].put("window")
+                system_queues[draw_window_id].put(draw_window_id)
+    except KeyboardInterrupt:
+        pass
+
+
 def draw_window(window, frame_queue, heatmap_queue, draw_event_queue):
     """ draw the most recent frame
     """
@@ -658,19 +680,6 @@ def draw_window(window, frame_queue, heatmap_queue, draw_event_queue):
 
     except KeyboardInterrupt:
         pass
-
-
-    def event_controller(window, draw_window_id, event_queues):
-        try:
-            while True:
-                keystroke = window.getkey()
-                keystroke = chr(keystroke)
-                if keystroke == "1":
-                    draw_id.value = 1
-                elif keystroke == "2":
-                    draw_id.value = 2
-        except KeyboardInterrupt:
-            pass
 
 
 # ======================================================================================================================
@@ -763,14 +772,14 @@ def start_curses():
 
 def terminate_processes():
     time.sleep(.15)
-    for proc in Main.process_frame_controllers:
+    procs = Main.process_frame_controllers + [Main.process_event_controller]
+    for proc in procs:
         if proc.exitcode is None:
             term_sig = 2
             os.kill(proc.pid, term_sig)
     time.sleep(.2)
-    for proc in Main.process_frame_controllers:
+    for proc in procs:
         proc.terminate()
-
 
 def terminate_curses():
     curses.echo()
@@ -789,6 +798,7 @@ class Main:
     event_queues = []
     system_queues = []
     process_frame_controllers = []
+    process_event_controller = None
 
 def main_controller():
     if Settings.curses:
@@ -819,7 +829,7 @@ def main_controller():
         Main.event_queues[x] = multiprocessing.Queue(1)
         Main.system_queues[x] = multiprocessing.Queue(1)
         Main.process_frame_controllers[x] = multiprocessing.Process(
-            target=frame_controller_seed.controller,
+            target=frame_controller_seed.frame_controller,
             args=(
                 Settings.commands[x],
                 Settings.intervals[x],
@@ -833,6 +843,17 @@ def main_controller():
 
     for x in range(Settings.commands_count):
         Main.process_frame_controllers[x].start()
+
+    Main.process_event_controller = multiprocessing.Process(
+        target=event_controller,
+        args=(
+            stdscr,
+            Settings.draw_window_id,
+            Main.event_queues,
+            Main.system_queues
+        ))
+    Main.process_event_controller.start()
+    Settings.debug("aaaaaa event start", 1)
 
     time.sleep(Settings.stop - Settings.start)
 
