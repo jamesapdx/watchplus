@@ -20,16 +20,18 @@ class Settings:
     curses = False
     curses = True
     debug_level = 0
-    debug_mode = True
     debug_mode = False
+    debug_mode = True
     start = None
     stop = None
     start_all = None
     stop_all = None
     commands = ['date']
-    if False:
+    if True:
         commands = [
-            'dmesg;date +%N',
+            'date +%N; dmesg',
+            'date +%N',
+            'date +%N',
             'date; sleep 22; sleep 11; date',
             'echo "abcgxz abc \n123456\n7890 !@#$&^"',
             'python -c "import timeit; print(str(timeit.default_timer()))"',
@@ -38,7 +40,7 @@ class Settings:
             './test.sh',
             'dmesg' ]
     commands_count = len(commands)
-    intervals = [5] * commands_count
+    intervals = [1] * commands_count
     precision = [True] * commands_count
     cooldown_ticks = 4
     cooldown_color_map = [0, 1] + ([2] * (cooldown_ticks + 1))
@@ -106,7 +108,6 @@ class FrameControllers:
         self.generator_seed = FrameGenerators()
         self.generator_frame_queue = multiprocessing.Queue(1)
         self.generator_heatmap_queue = multiprocessing.Queue(1)
-        self.generator_state_queue = multiprocessing.Queue(1)
         self.generator_event_queue = multiprocessing.Queue(1)
         self.process_generator = multiprocessing.Process(
             target=self.generator_seed.generator_controller,
@@ -117,7 +118,6 @@ class FrameControllers:
                 self.precision,
                 self.generator_frame_queue,
                 self.generator_heatmap_queue,
-                self.generator_state_queue,
                 self.generator_event_queue,
                 self.event_queue
             ))
@@ -209,50 +209,34 @@ class FrameControllers:
         self.start_all_childprocesses()
 
         self.event_choices = {
-            "generator" : self.get_from_generator,
-            "window open" : self.window_open,
-            "window close" : self.window_close
+            "new frame" : self.process_new_frame,
+            "window change" : self.window_change,
         }
         try:
             while True:
                 # this controller queue get is blocking, so just wait for the a new frame or a message from key_press
                 self.event = self.event_queue.get()
-                self.event_choices.get(self.event, "")()
+                self.event_choices.get(self.event[0], "")()
         except KeyboardInterrupt:
             # the controller method runs as a separate process and is killed either by a ctrl-c or a term_sig 2
             # poison pill / process.terminate is not used
             self.terminate_childprocesses()
 
-    def get_from_generator(self):
-        if self.get_frame_state() is True:
-            self.store_frame()
-            self.store_heatmap()
-            self.write_frame()
-            self.draw_live_frame()
-
-    def get_frame_state(self):
-        """ unload from the frame_state queue, this done before the frame and heatmap"""
-        try:
-            # only give it 1 second to unload the queue, don't want to get stuck forever
-            state_timeout = 1
-            a, b, c, d = self.generator_state_queue.get(block=True,timeout=state_timeout)
-        except multiprocessing.queues.Empty:
-            Settings.debug("state_timeout")
-            return False
-        else:
-            self.new_frame()
-            self.frame_state[self.current] = a
-            self.heatmap_state[self.current] = b
-            self.frame_run_time[self.current] = c
-            self.frame_completion_time[self.current] = d
-            return True
-
-    def window_open(self):
-        self.draw_window_id = self.system_queue.get()
+    def process_new_frame(self):
+        self.new_frame()
+        self.frame_state[self.current] = self.event[1]
+        self.heatmap_state[self.current] = self.event[2]
+        self.frame_run_time[self.current] = self.event[3]
+        self.frame_completion_time[self.current] = self.event[4]
+        self.store_frame()
+        self.store_heatmap()
+        self.write_frame()
         self.draw_live_frame()
 
-    def window_close(self):
-        self.draw_window_id = self.system_queue.get()
+    def window_change(self):
+        self.draw_window_id = self.event[1]
+        if self.event[2] == "new":
+            self.draw_live_frame()
 
     def new_frame(self):
         """ frames and heatmaps are stored in lists, so just append a new blank element to the fields """
@@ -348,7 +332,7 @@ class FrameGenerators:
         self.heatmap_state = None
 
     # noinspection PyAttributeOutsideInit
-    def generator_controller(self, command, interval, start, precision, frame_queue, heatmap_queue, state_queue,
+    def generator_controller(self, command, interval, start, precision, frame_queue, heatmap_queue,
                    generator_event_queue, event_queue):
         self.command = command
         self.interval = interval
@@ -356,9 +340,8 @@ class FrameGenerators:
         self.precision = precision
         self.frame_queue = frame_queue
         self.heatmap_queue = heatmap_queue
-        self.state_queue = state_queue
         self.generator_event_queue = generator_event_queue
-        self.put_into_event_queue = event_queue
+        self.event_queue = event_queue
         self.command_gid = None
         self.generator_event = None
 
@@ -429,7 +412,6 @@ class FrameGenerators:
         if self.heatmap_state == "changed":
             Settings.debug("q1.1")
             self.heatmap_queue.put(self.heatmap[self.current])
-            #except Full:
             Settings.debug("q1.2")
         elif self.heatmap_state == "dropped":
             pass
@@ -448,15 +430,13 @@ class FrameGenerators:
             self.flip_pointers()
         Settings.debug("q3")
 
-        self.state_queue.put((
+        self.event_queue.put((
+            "new frame",
             self.frame_state,
             self.heatmap_state,
             self.run_time,
             self.completion_time
         ))
-        Settings.debug("q4")
-
-        self.put_into_event_queue.put("generator")
 
     def flip_pointers(self):
         self.current = 1 if self.current == 0 else 0
@@ -604,7 +584,6 @@ class FrameGenerators:
 #   Functions that run as subprocesses
 # ======================================================================================================================
 
-
 def event_controller(window, draw_window_id, event_queues, system_queues):
     Settings.debug("event start", 1)
     try:
@@ -612,25 +591,24 @@ def event_controller(window, draw_window_id, event_queues, system_queues):
         while True:
             if Settings.curses is True:
                 keystroke = window.getch()
-                keystroke = chr(keystroke)
+                try:
+                    keystroke = chr(keystroke)
+                except ValueError:
+                    keystroke = ""
             else:
                 time.sleep(2)
                 keystroke = "1" if keystroke == "2" else "2"
 
-            if keystroke == "1":
-                event_queues[draw_window_id].put("window")
-                system_queues[draw_window_id].put(1)
-                draw_window_id = 1
-                time.sleep(.1)
-                event_queues[draw_window_id].put("window")
-                system_queues[draw_window_id].put(draw_window_id)
-            elif keystroke == "2":
-                event_queues[draw_window_id].put("window")
-                system_queues[draw_window_id].put(2)
-                draw_window_id = 2
-                time.sleep(.1)
-                event_queues[draw_window_id].put("window")
-                system_queues[draw_window_id].put(draw_window_id)
+            try:
+                new_win = int(keystroke) - 1
+                if new_win != draw_window_id:
+                    event_queues[draw_window_id].put(("window change",new_win,"close"))
+                    draw_window_id = new_win
+                    time.sleep(.1)
+                    event_queues[draw_window_id].put(("window change",new_win,"new"))
+            except ValueError:
+                pass
+
     except KeyboardInterrupt:
         pass
 
@@ -667,6 +645,8 @@ def draw_window(window, frame_queue, heatmap_queue, draw_event_queue):
 
             draw_height = min(len(frame), terminal_height - 1, custom_height - 1)
             width = min(terminal_width, custom_width)
+
+            #window.addstr(str(timeit.default_timer()))
 
             for line in range(draw_height):
                 #frame[line], heatmap[line], max_char = self.equalize_lengths(" ", frame[line], heatmap[line])
@@ -806,7 +786,7 @@ class Main:
     event_queues = []
     system_queues = []
     process_frame_controllers = []
-    process_event_controller = None
+    process_event_controller = []
 
 def main_controller():
     if Settings.curses:
@@ -834,6 +814,7 @@ def main_controller():
         Main.system_queues.append("")
         Main.process_frame_controllers.append("")
 
+
         Main.event_queues[x] = multiprocessing.Queue(1)
         Main.system_queues[x] = multiprocessing.Queue(1)
         Main.process_frame_controllers[x] = multiprocessing.Process(
@@ -852,7 +833,7 @@ def main_controller():
     for x in range(Settings.commands_count):
         Main.process_frame_controllers[x].start()
 
-    if False:
+    if True:
         Main.process_event_controller = multiprocessing.Process(
             target=event_controller,
             args=(
