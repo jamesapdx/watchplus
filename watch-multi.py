@@ -20,24 +20,25 @@ class Settings:
     curses = False
     curses = True
     debug_level = 0
-    debug_mode = False
     debug_mode = True
+    debug_mode = False
     start = None
     stop = None
     start_all = None
     stop_all = None
     commands = ['date']
-    commands = [
-        'dmesg;date +%N',
-        'date; sleep 22; sleep 11; date',
-        'echo "abcgxz abc \n123456\n7890 !@#$&^"',
-        'python -c "import timeit; print(str(timeit.default_timer()))"',
-        'date',
-        'date',
-        './test.sh',
-        'dmesg' ]
+    if False:
+        commands = [
+            'dmesg;date +%N',
+            'date; sleep 22; sleep 11; date',
+            'echo "abcgxz abc \n123456\n7890 !@#$&^"',
+            'python -c "import timeit; print(str(timeit.default_timer()))"',
+            'date',
+            'date',
+            './test.sh',
+            'dmesg' ]
     commands_count = len(commands)
-    intervals = [1] * commands_count
+    intervals = [5] * commands_count
     precision = [True] * commands_count
     cooldown_ticks = 4
     cooldown_color_map = [0, 1] + ([2] * (cooldown_ticks + 1))
@@ -158,6 +159,22 @@ class FrameControllers:
         self.process_generator.start()
         self.process_draw_window.start()
 
+    def terminate_childprocesses(self):
+        """ all child subprocoesses are killed with os - signal 2, not a flag or terminate.  This leads to a clean
+        stop with no error messages in the case of a user control-c. User control-c are propagated to all
+        subprocesses automatically on an OS level and are not controllable. """
+        # wait a tad to let the child processes stop on their own in the case of user control-c.
+        time.sleep(.05)
+        term_sig = 2
+        if self.process_generator.exitcode is None:
+            os.kill(self.process_generator.pid, term_sig)
+        if self.process_draw_window.exitcode is None:
+            os.kill(self.process_draw_window.pid, term_sig)
+        # just in case this doesn't work because of timing or otherwise, wait a bit and kill with process.terminate
+        time.sleep(.1)
+        self.process_generator.terminate()
+        self.process_draw_window.terminate()
+
     def frame_controller(self, command, interval, start, precision, window_id, draw_window_id, event_queue,
                    system_queue):
         """ This is the main method that will control the input, output, and storage of the frame and heatmap data.
@@ -191,42 +208,27 @@ class FrameControllers:
         self.initialize_all_childprocesses()
         self.start_all_childprocesses()
 
+        self.event_choices = {
+            "generator" : self.get_from_generator,
+            "window open" : self.window_open,
+            "window close" : self.window_close
+        }
         try:
             while True:
                 # this controller queue get is blocking, so just wait for the a new frame or a message from key_press
                 self.event = self.event_queue.get()
-                if self.event == "generator":
-                    if self.get_frame_state() is True:
-                        self.store_frame()
-                        self.store_heatmap()
-                        self.write_frame()
-                        if self.presentation_mode == "live":
-                            self.draw_live_frame()
-                        if self.presentation_mode == "playback":
-                            pass
-                if self.event == "window":
-                    self.draw_window_id = self.system_queue.get()
+                self.event_choices.get(self.event, "")()
         except KeyboardInterrupt:
             # the controller method runs as a separate process and is killed either by a ctrl-c or a term_sig 2
             # poison pill / process.terminate is not used
             self.terminate_childprocesses()
 
-    def terminate_childprocesses(self):
-        """ all child subprocoesses are killed with os - signal 2, not a flag or terminate.  This leads to a clean
-        stop with no error messages in the case of a user control-c. User control-c are propagated to all
-        subprocesses automatically on an OS level and are not controllable. """
-        # wait a tad to let the child processes stop on their own in the case of user control-c.
-        time.sleep(.05)
-        term_sig = 2
-        if self.process_generator.exitcode is None:
-            os.kill(self.process_generator.pid, term_sig)
-        if self.process_draw_window.exitcode is None:
-            os.kill(self.process_draw_window.pid, term_sig)
-        # just in case this doesn't work because of timing or otherwise, wait a bit and kill with process.terminate
-        time.sleep(.1)
-        self.process_generator.terminate()
-        self.process_draw_window.terminate()
-
+    def get_from_generator(self):
+        if self.get_frame_state() is True:
+            self.store_frame()
+            self.store_heatmap()
+            self.write_frame()
+            self.draw_live_frame()
 
     def get_frame_state(self):
         """ unload from the frame_state queue, this done before the frame and heatmap"""
@@ -244,6 +246,13 @@ class FrameControllers:
             self.frame_run_time[self.current] = c
             self.frame_completion_time[self.current] = d
             return True
+
+    def window_open(self):
+        self.draw_window_id = self.system_queue.get()
+        self.draw_live_frame()
+
+    def window_close(self):
+        self.draw_window_id = self.system_queue.get()
 
     def new_frame(self):
         """ frames and heatmaps are stored in lists, so just append a new blank element to the fields """
@@ -316,9 +325,8 @@ class FrameControllers:
             self.draw_event_queue.put("draw")
             self.draw_frame_queue.put(self.frame[self.frame_pointer[-1]])
             self.draw_heatmap_queue.put(self.heatmap[self.heatmap_pointer[-1]])
-
-    def draw_playback_frame(self):
-        pass
+        if self.presentation_mode == "playback":
+            pass
 
 
 # noinspection PyAttributeOutsideInit
@@ -600,10 +608,10 @@ class FrameGenerators:
 def event_controller(window, draw_window_id, event_queues, system_queues):
     Settings.debug("event start", 1)
     try:
-        keystroke = "1"
+        #keystroke = "1"
         while True:
             if Settings.curses is True:
-                keystroke = window.getkey()
+                keystroke = window.getch()
                 keystroke = chr(keystroke)
             else:
                 time.sleep(2)
@@ -844,15 +852,16 @@ def main_controller():
     for x in range(Settings.commands_count):
         Main.process_frame_controllers[x].start()
 
-    Main.process_event_controller = multiprocessing.Process(
-        target=event_controller,
-        args=(
-            stdscr,
-            Settings.draw_window_id,
-            Main.event_queues,
-            Main.system_queues
-        ))
-    Main.process_event_controller.start()
+    if False:
+        Main.process_event_controller = multiprocessing.Process(
+            target=event_controller,
+            args=(
+                stdscr,
+                Settings.draw_window_id,
+                Main.event_queues,
+                Main.system_queues
+            ))
+        Main.process_event_controller.start()
     Settings.debug("aaaaaa event start", 1)
 
     time.sleep(Settings.stop - Settings.start)
@@ -873,8 +882,6 @@ if __name__ == "__main__":
             terminate_processes()
         if Settings.curses is True:
             terminate_curses()
-
-
 
 
         #curses.isendwin() is not True:
