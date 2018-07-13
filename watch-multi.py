@@ -12,6 +12,12 @@ import time
 import timeit
 
 # ======================================================================================================================
+#   working on:
+#   move draw window back to frame_controller for now, get the program to work, then get the event controller class
+#   working
+# ======================================================================================================================
+
+# ======================================================================================================================
 #   Settings
 # ======================================================================================================================
 
@@ -31,10 +37,10 @@ class Settings:
         commands = [
             'date +%N; dmesg',
             'date +%N',
+            'python -c "import timeit; print(str(timeit.default_timer()))"',
+            'echo "abcgxz abc \n123456\n7890 !@#$&^"',
             'date +%N',
             'date; sleep 22; sleep 11; date',
-            'echo "abcgxz abc \n123456\n7890 !@#$&^"',
-            'python -c "import timeit; print(str(timeit.default_timer()))"',
             'date',
             'date',
             './test.sh',
@@ -580,6 +586,75 @@ class FrameGenerators:
         return values
 
 
+class Windows:
+
+    def __init__(self, window_id, mode):
+        self.window_id = window_id
+        self.presentation_mode = mode
+        self.frame_queue = frame_queue
+        self.heatmap_queue = heatmap_queue
+        self.draw_event_queue = draw_event_queue
+        self.frame_event_queue = frame_event_queue
+
+
+
+    def draw_window(window, frame_queue, heatmap_queue, draw_event_queue):
+        """ draw the most recent frame
+        """
+
+        try:
+            custom_height = 9999
+            custom_width = 9999
+
+            while True:
+                draw_event = draw_event_queue.get()
+                Settings.debug("d1")
+
+                if Settings.curses is False:
+                    # don't use curses
+                    Settings.debug("d2")
+                    frame = frame_queue.get()
+                    Settings.debug("d3")
+                    heatmap = heatmap_queue.get()
+                    #subprocess.Popen("clear").communicate()
+                    #print("\n".join(frame))
+                    #print("\n".join(heatmap))
+                    continue
+
+                frame = frame_queue.get()
+                heatmap = heatmap_queue.get()
+
+                window.clear()
+
+                terminal_height, terminal_width = window.getmaxyx()
+
+                draw_height = min(len(frame), terminal_height - 1, custom_height - 1)
+                width = min(terminal_width, custom_width)
+
+                #window.addstr(str(timeit.default_timer()))
+
+                for line in range(draw_height):
+                    #frame[line], heatmap[line], max_char = self.equalize_lengths(" ", frame[line], heatmap[line])
+                    #heatmap = heatmap.replace(" ", "0")
+
+                    draw_width = min(len(frame[line]), width)
+
+                    for column in range(draw_width):
+                        try:
+                            char = str(frame[line][column])
+                        except IndexError:
+                            char = "?"
+                        try:
+                            color_pair = curses.color_pair(Settings.cooldown_color_map[int("0" + heatmap[line][column])])
+                        except IndexError:
+                            color_pair = 0
+                        window.addstr(line, column, char, color_pair)
+                window.refresh()
+
+        except KeyboardInterrupt:
+            pass
+
+
 # ======================================================================================================================
 #   Functions that run as subprocesses
 # ======================================================================================================================
@@ -613,61 +688,6 @@ def event_controller(window, draw_window_id, event_queues, system_queues):
         pass
 
 
-def draw_window(window, frame_queue, heatmap_queue, draw_event_queue):
-    """ draw the most recent frame
-    """
-
-    try:
-        custom_height = 9999
-        custom_width = 9999
-
-        while True:
-            draw_event = draw_event_queue.get()
-            Settings.debug("d1")
-
-            if Settings.curses is False:
-                # don't use curses
-                Settings.debug("d2")
-                frame = frame_queue.get()
-                Settings.debug("d3")
-                heatmap = heatmap_queue.get()
-                #subprocess.Popen("clear").communicate()
-                #print("\n".join(frame))
-                #print("\n".join(heatmap))
-                continue
-
-            frame = frame_queue.get()
-            heatmap = heatmap_queue.get()
-
-            window.clear()
-
-            terminal_height, terminal_width = window.getmaxyx()
-
-            draw_height = min(len(frame), terminal_height - 1, custom_height - 1)
-            width = min(terminal_width, custom_width)
-
-            #window.addstr(str(timeit.default_timer()))
-
-            for line in range(draw_height):
-                #frame[line], heatmap[line], max_char = self.equalize_lengths(" ", frame[line], heatmap[line])
-                #heatmap = heatmap.replace(" ", "0")
-
-                draw_width = min(len(frame[line]), width)
-
-                for column in range(draw_width):
-                    try:
-                        char = str(frame[line][column])
-                    except IndexError:
-                        char = "?"
-                    try:
-                        color_pair = curses.color_pair(Settings.cooldown_color_map[int("0" + heatmap[line][column])])
-                    except IndexError:
-                        color_pair = 0
-                    window.addstr(line, column, char, color_pair)
-            window.refresh()
-
-    except KeyboardInterrupt:
-        pass
 
 
 # ======================================================================================================================
