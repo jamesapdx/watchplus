@@ -149,7 +149,7 @@ class FrameControllers:
         self.draw_heatmap_queue = multiprocessing.Queue(1)
         self.draw_event_queue = multiprocessing.Queue(1)
         self.process_draw_window = multiprocessing.Process(
-            target=draw_window,
+            target=self.draw_window,
             args=(
                 self.window,
                 self.draw_frame_queue,
@@ -316,6 +316,62 @@ class FrameControllers:
             self.draw_frame_queue.put(self.frame[self.frame_pointer[-1]])
             self.draw_heatmap_queue.put(self.heatmap[self.heatmap_pointer[-1]])
         if self.presentation_mode == "playback":
+            pass
+
+    def draw_window(self, window, frame_queue, heatmap_queue, draw_event_queue):
+        """ draw the most recent frame
+        """
+
+        try:
+            custom_height = 9999
+            custom_width = 9999
+
+            while True:
+                draw_event = draw_event_queue.get()
+                Settings.debug("d1")
+
+                if Settings.curses is False:
+                    # don't use curses
+                    Settings.debug("d2")
+                    frame = frame_queue.get()
+                    Settings.debug("d3")
+                    heatmap = heatmap_queue.get()
+                    #subprocess.Popen("clear").communicate()
+                    #print("\n".join(frame))
+                    #print("\n".join(heatmap))
+                    continue
+
+                frame = frame_queue.get()
+                heatmap = heatmap_queue.get()
+
+                window.clear()
+
+                terminal_height, terminal_width = window.getmaxyx()
+
+                draw_height = min(len(frame), terminal_height - 1, custom_height - 1)
+                width = min(terminal_width, custom_width)
+
+                #window.addstr(str(timeit.default_timer()))
+
+                for line in range(draw_height):
+                    #frame[line], heatmap[line], max_char = self.equalize_lengths(" ", frame[line], heatmap[line])
+                    #heatmap = heatmap.replace(" ", "0")
+
+                    draw_width = min(len(frame[line]), width)
+
+                    for column in range(draw_width):
+                        try:
+                            char = str(frame[line][column])
+                        except IndexError:
+                            char = "?"
+                        try:
+                            color_pair = curses.color_pair(Settings.cooldown_color_map[int("0" + heatmap[line][column])])
+                        except IndexError:
+                            color_pair = 0
+                        window.addstr(line, column, char, color_pair)
+                window.refresh()
+
+        except KeyboardInterrupt:
             pass
 
 
@@ -598,7 +654,7 @@ class Windows:
 
 
 
-    def draw_window(window, frame_queue, heatmap_queue, draw_event_queue):
+    def draw_window2(window, frame_queue, heatmap_queue, draw_event_queue):
         """ draw the most recent frame
         """
 
