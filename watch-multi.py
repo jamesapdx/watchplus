@@ -1,4 +1,4 @@
-#!/usr/bin/python3
+#!/usr/bin/python
 
 # -*- encoding: utf8 -*-
 
@@ -13,8 +13,9 @@ import timeit
 
 # ======================================================================================================================
 #   working on:
-#   move draw window back to frame_controller for now, get the program to work, then get the event controller class
+#   done:  move draw window back to frame_controller for now, get the program to work, then get the event controller class
 #   working
+#   there are now two draw functions, fyi
 # ======================================================================================================================
 
 # ======================================================================================================================
