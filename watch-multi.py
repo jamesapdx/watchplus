@@ -37,6 +37,7 @@ class Debug:
 def argparse():
     parser = argparse.ArgumentParser()
 
+
     parser.add_argument("commands", nargs="*" )
     parser.add_argument("-n", "--interval", type="int")
     parser.add_argument("-i", "--imprecise", action="store_true")
