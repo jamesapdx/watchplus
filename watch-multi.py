@@ -10,63 +10,208 @@ import multiprocessing
 import threading
 import time
 import timeit
+import argparse
 
-# ======================================================================================================================
-#   working on:
-#   done:  move draw window back to frame_controller for now, get the program to work, then get the event controller class
-#   working
-#   there are now two draw functions, fyi
-# ======================================================================================================================
+# ----------------------------------------------------------------------------------------------------------------------
+#       working on:
+#       done:
+#       working:
+#       note: there are now two draw functions
+# ----------------------------------------------------------------------------------------------------------------------
 
-# ======================================================================================================================
-#   Settings
-# ======================================================================================================================
+# ----------------------------------------------------------------------------------------------------------------------
+#       Initialize
+# ----------------------------------------------------------------------------------------------------------------------
 
-class Settings:
-    duration = 41
-    curses = False
-    curses = True
+
+class Debug:
     debug_level = 0
     debug_mode = False
     debug_mode = True
-    start = None
-    stop = None
-    start_all = None
-    stop_all = None
-    commands = ['date']
-    if True:
-        commands = [
-            'date +%N; dmesg',
-            'date +%N',
-            'python -c "import timeit; print(str(timeit.default_timer()))"',
-            'echo "abcgxz abc \n123456\n7890 !@#$&^"',
-            'date +%N',
-            'date; sleep 22; sleep 11; date',
-            'date',
-            'date',
-            './test.sh',
-            'dmesg' ]
-    commands_count = len(commands)
-    intervals = [1] * commands_count
-    precision = [True] * commands_count
-    cooldown_ticks = 4
-    cooldown_color_map = [0, 1] + ([2] * (cooldown_ticks + 1))
-    windows_count = 1
-    window_id = []
-    draw_window_id = 0
 
     @classmethod
     def debug(cls, item, level=0):
-        if Settings.debug_mode is True and Settings.curses is False and Settings.debug_level >= level:
+        if Debug.debug_mode is True and Settings.curses is False and Debug.debug_level >= level:
             print(item)
 
-# ======================================================================================================================
-#   Arguments and flags
-# ======================================================================================================================
+def argparse():
+    parser = argparse.ArgumentParser()
 
-# ======================================================================================================================
-#   Classes/methods that run as subprocesses
-# ======================================================================================================================
+    parser.add_argument("commands", nargs="*" )
+    parser.add_argument("-n", "--interval", type="int")
+    parser.add_argument("-i", "--imprecise", action="store_true")
+    parser.add_argument("-p", "--plain", action="store_true")
+    parser.add_argument("-s", "--source")
+    parser.add_argument("-v1", "--variables1", nargs="+")
+    parser.add_argument("-v2", "--variables2", nargs="+")
+    parser.add_argument("-v3", "--variables3", nargs="+")
+    parser.add_argument("-v4", "--variables3", nargs="+")
+
+
+def initwatch():
+    if arg folders
+        loop create commands
+    if arg commands
+        loop create commands
+    otherwise if default folder
+        loop create commands
+    else
+        bye
+
+
+    pass
+
+class Commands:
+
+    def __init__(self):
+        self.duration = 41
+        self.curses = False
+        self.curses = True
+        self.start = None
+        self.stop = None
+        self.start_all = None
+        self.stop_all = None
+        self.commands = ['date']
+        if True:
+                    commands = [
+                    'date +%N; dmesg',
+                    'date +%N',
+                    'python -c "import timeit; print(str(timeit.default_timer()))"',
+                    'echo "abcgxz abc \n123456\n7890 !@#$&^"',
+                    'date +%N',
+                    'date; sleep 22; sleep 11; date',
+                    'date',
+                    'date',
+                    './test.sh',
+                    'dmesg' ]
+        self.commands_count = len(self.commands)
+        self.intervals = [1] * self.commands_count
+        self.precision = [True] * self.commands_count
+        self.cooldown_ticks = 4
+        self.cooldown_color_map = [0, 1] + ([2] * (self.cooldown_ticks + 1))
+        self.windows_count = 1
+        self.window_id = []
+        self.draw_window_id = 0
+
+def curses_color_setup():
+    curses.init_pair(1, curses.COLOR_BLACK, curses.COLOR_YELLOW)
+    curses.init_pair(2, curses.COLOR_BLACK, curses.COLOR_RED)
+
+def start_curses():
+    stdscr = curses.initscr()
+    curses.noecho()
+    curses.cbreak()
+    curses.curs_set(0)
+    stdscr.keypad(True)
+    return stdscr
+
+class Procs:
+    event_queues = []
+    system_queues = []
+    process_frame_controllers = []
+    process_event_controller = []
+
+def initialize_key_press_process(self):
+    self.process_key_press = multiprocessing.Process(
+        target=self.key_press,
+        args=(
+            self.system_queue
+        ))
+
+def main():
+    if Settings.curses:
+        stdscr = start_curses()
+        curses.start_color()
+        curses_color_setup()
+    else:
+        stdscr = None
+
+    Settings.start = timeit.default_timer()
+    Settings.stop = Settings.start + Settings.duration
+    Settings.start_all = [Settings.start] * Settings.commands_count
+    Settings.key = Settings.start
+
+    Procs.system_queue = multiprocessing.Queue(1)
+    frame_controller_seed = FrameControllers()
+    for x in range(Settings.commands_count):
+        # result, error = run_linux4(Settings.commands[x])
+        # print(len(result))
+        # sys.exit()
+
+        Settings.window_id.append(x)
+        Debug.debug("state_timeout")
+        Procs.event_queues.append("")
+        Procs.system_queues.append("")
+        Procs.process_frame_controllers.append("")
+
+
+        Procs.event_queues[x] = multiprocessing.Queue(1)
+        Procs.system_queues[x] = multiprocessing.Queue(1)
+        Procs.process_frame_controllers[x] = multiprocessing.Process(
+            target=frame_controller_seed.frame_controller,
+            args=(
+                Settings.commands[x],
+                Settings.intervals[x],
+                Settings.start_all[x],
+                Settings.precision[x],
+                Settings.window_id[x],
+                Settings.draw_window_id,
+                Procs.event_queues[x],
+                Procs.system_queues[x]
+            ))
+
+    for x in range(Settings.commands_count):
+        Procs.process_frame_controllers[x].start()
+
+    if True:
+        Procs.process_event_controller = multiprocessing.Process(
+            target=event_controller,
+            args=(
+                stdscr,
+                Settings.draw_window_id,
+                Procs.event_queues,
+                Procs.system_queues
+            ))
+        Procs.process_event_controller.start()
+    Debug.debug("aaaaaa event start", 1)
+
+    time.sleep(Settings.stop - Settings.start)
+
+# ----------------------------------------------------------------------------------------------------------------------
+#       Master Controller / Event Manager
+# ----------------------------------------------------------------------------------------------------------------------
+
+def event_controller(window, draw_window_id, event_queues, system_queues):
+    Debug.debug("event start", 1)
+    try:
+        #keystroke = "1"
+        while True:
+            if Settings.curses is True:
+                keystroke = window.getch()
+                try:
+                    keystroke = chr(keystroke)
+                except ValueError:
+                    keystroke = ""
+            else:
+                time.sleep(2)
+                keystroke = "1" if keystroke == "2" else "2"
+
+            try:
+                new_win = int(keystroke) - 1
+                if new_win != draw_window_id:
+                    event_queues[draw_window_id].put(("window change",new_win,"close"))
+                    draw_window_id = new_win
+                    time.sleep(.1)
+                    event_queues[draw_window_id].put(("window change",new_win,"new"))
+            except ValueError:
+                pass
+
+    except KeyboardInterrupt:
+        pass
+
+# ----------------------------------------------------------------------------------------------------------------------
+#       Frames Subprocesses
+# ----------------------------------------------------------------------------------------------------------------------
 
 class FrameControllers:
     """This is the main controlling class.
@@ -256,7 +401,7 @@ class FrameControllers:
         self.heatmap_pointer.append("")
         self.heatmap_state.append("")
         self.current = len(self.frame) - 1
-        Settings.debug("self.current: " + str(self.current))
+        Debug.debug("self.current: " + str(self.current))
 
     def store_frame(self):
         """ if the state is "changed", this function will try unload and store a single frame from the queue,
@@ -270,7 +415,7 @@ class FrameControllers:
                 self.frame[self.current] = self.generator_frame_queue.get(block=True,timeout=frame_timeout)
             except multiprocessing.queues.Empty:
                 # unable to get anything from the queue, just consider this an error and drop the frame
-                Settings.debug("dropped in frame")
+                Debug.debug("dropped in frame")
                 self.frame_state[self.current] = "dropped"
                 self.heatmap_state[self.current] = "dropped"
                 self.frame_pointer[self.current] = self.frame_pointer[self.current - 1]
@@ -280,7 +425,7 @@ class FrameControllers:
             self.frame_pointer[self.current] = self.frame_pointer[self.current - 1]
         elif self.frame_state[self.current] == "dropped":
             self.frame_pointer[self.current] = self.frame_pointer[self.current - 1]
-            Settings.debug("dropped")
+            Debug.debug("dropped")
 
     def store_heatmap(self):
         """ if the state is "changed", this function will try unload and store single a heatmap from the queue,
@@ -301,7 +446,7 @@ class FrameControllers:
             self.heatmap_pointer[self.current] = self.heatmap_pointer[self.current - 1]
         elif self.heatmap_state[self.current] == "dropped":
             self.heatmap_pointer[self.current] = self.heatmap_pointer[self.current - 1]
-            Settings.debug("dropped")
+            Debug.debug("dropped")
         elif self.heatmap_state[self.current] == "ignored":
             self.heatmap_pointer[self.current] = self.heatmap_pointer[self.current - 1]
 
@@ -309,10 +454,10 @@ class FrameControllers:
         pass
 
     def draw_live_frame(self):
-        Settings.debug("ddd 1")
+        Debug.debug("ddd 1")
         if self.presentation_mode == "live" and self.window_id == self.draw_window_id:
-            Settings.debug(str(self.window_id) + "ww:" + str(self.draw_window_id))
-            Settings.debug("ddd 2")
+            Debug.debug(str(self.window_id) + "ww:" + str(self.draw_window_id))
+            Debug.debug("ddd 2")
             self.draw_event_queue.put("draw")
             self.draw_frame_queue.put(self.frame[self.frame_pointer[-1]])
             self.draw_heatmap_queue.put(self.heatmap[self.heatmap_pointer[-1]])
@@ -329,13 +474,13 @@ class FrameControllers:
 
             while True:
                 draw_event = draw_event_queue.get()
-                Settings.debug("d1")
+                Debug.debug("d1")
 
                 if Settings.curses is False:
                     # don't use curses
-                    Settings.debug("d2")
+                    Debug.debug("d2")
                     frame = frame_queue.get()
-                    Settings.debug("d3")
+                    Debug.debug("d3")
                     heatmap = heatmap_queue.get()
                     #subprocess.Popen("clear").communicate()
                     #print("\n".join(frame))
@@ -375,8 +520,6 @@ class FrameControllers:
         except KeyboardInterrupt:
             pass
 
-
-# noinspection PyAttributeOutsideInit
 class FrameGenerators:
 
 
@@ -432,17 +575,17 @@ class FrameGenerators:
 
                 if self.precision is True and self.first_run is False and sleep_time == 0:
                     self.dropped()
-                    Settings.debug("dropped in generator 1")
+                    Debug.debug("dropped in generator 1")
                 else:
-                    Settings.debug("starting frame generator: ")
+                    Debug.debug("starting frame generator: ")
                     self.frame_generator()
                     if self.frame_state != "dropped":
-                        Settings.debug("starting heatmap generator: ")
+                        Debug.debug("starting heatmap generator: ")
                         self.heatmap_generator()
 
-                Settings.debug("starting put_queues generator: ")
+                Debug.debug("starting put_queues generator: ")
                 self.put_queues()
-                Settings.debug("ending put_queues generator: ")
+                Debug.debug("ending put_queues generator: ")
 
                 self.first_run = False
                 self.frame_state = None
@@ -456,7 +599,7 @@ class FrameGenerators:
 
         except KeyboardInterrupt:
             if self.command_gid != 0:
-                Settings.debug("gggggt2")
+                Debug.debug("gggggt2")
                 term_sig = 15
                 os.killpg(os.getpgid(self.command_gid), term_sig)
             pass
@@ -470,19 +613,19 @@ class FrameGenerators:
         self.completion_time = current_time if completion_time is None else completion_time
 
     def put_queues(self):
-        Settings.debug("q1")
-        Settings.debug("gen command_gid: " + str(self.command_gid))
+        Debug.debug("q1")
+        Debug.debug("gen command_gid: " + str(self.command_gid))
         if self.heatmap_state == "changed":
-            Settings.debug("q1.1")
+            Debug.debug("q1.1")
             self.heatmap_queue.put(self.heatmap[self.current])
-            Settings.debug("q1.2")
+            Debug.debug("q1.2")
         elif self.heatmap_state == "dropped":
             pass
         elif self.heatmap_state == "ignore":
             pass
         elif self.heatmap_state == "unchanged":
             pass
-        Settings.debug("q2")
+        Debug.debug("q2")
 
         if self.frame_state == "changed":
             self.frame_queue.put(self.frame[self.current])
@@ -491,7 +634,7 @@ class FrameGenerators:
             pass
         elif self.frame_state == "unchanged":
             self.flip_pointers()
-        Settings.debug("q3")
+        Debug.debug("q3")
 
         self.event_queue.put((
             "new frame",
@@ -527,7 +670,7 @@ class FrameGenerators:
         )
         gid = os.getpgid(proc.pid)
         self.command_gid = gid
-        Settings.debug("gen command_gid: " + str(self.command_gid))
+        Debug.debug("gen command_gid: " + str(self.command_gid))
 
         if self.precision is True:
             safe_margin = .02
@@ -642,7 +785,6 @@ class FrameGenerators:
         values.append(max_length)
         return values
 
-
 class Windows:
 
     def __init__(self, window_id, mode):
@@ -665,13 +807,13 @@ class Windows:
 
             while True:
                 draw_event = draw_event_queue.get()
-                Settings.debug("d1")
+                Debug.debug("d1")
 
                 if Settings.curses is False:
                     # don't use curses
-                    Settings.debug("d2")
+                    Debug.debug("d2")
                     frame = frame_queue.get()
-                    Settings.debug("d3")
+                    Debug.debug("d3")
                     heatmap = heatmap_queue.get()
                     #subprocess.Popen("clear").communicate()
                     #print("\n".join(frame))
@@ -711,133 +853,14 @@ class Windows:
         except KeyboardInterrupt:
             pass
 
-
-# ======================================================================================================================
-#   Functions that run as subprocesses
-# ======================================================================================================================
-
-def event_controller(window, draw_window_id, event_queues, system_queues):
-    Settings.debug("event start", 1)
-    try:
-        #keystroke = "1"
-        while True:
-            if Settings.curses is True:
-                keystroke = window.getch()
-                try:
-                    keystroke = chr(keystroke)
-                except ValueError:
-                    keystroke = ""
-            else:
-                time.sleep(2)
-                keystroke = "1" if keystroke == "2" else "2"
-
-            try:
-                new_win = int(keystroke) - 1
-                if new_win != draw_window_id:
-                    event_queues[draw_window_id].put(("window change",new_win,"close"))
-                    draw_window_id = new_win
-                    time.sleep(.1)
-                    event_queues[draw_window_id].put(("window change",new_win,"new"))
-            except ValueError:
-                pass
-
-    except KeyboardInterrupt:
-        pass
-
-
-
-
-# ======================================================================================================================
-#   Functions
-# ======================================================================================================================
-
-
-def run_linux(command):
-    start = timeit.default_timer()
-    result, error = subprocess.Popen(
-        command,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        shell=True
-        ).communicate()
-    print(str(timeit.default_timer() - start))
-    return result, error
-
-def run_linux2(command):
-    result, error = subprocess.Popen(
-        command,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE
-    ).communicate()
-    return result, error
-
-def run_linux3(command):
-    p = subprocess.Popen(
-        command,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        shell=True
-        ,preexec_fn=os.setsid
-    )
-    #timerp = lambda p: p.wait()
-    #timer = multiprocessing.Process(target=timerp, args=(p,))
-    #timer.start()
-    #timer.join(5)
-
-    start = timeit.default_timer()
-    end = timeit.default_timer() + 4 - .02
-    while True:
-        time.sleep(.005)
-        if p.poll() is not None:
-            print("ssss")
-            break
-        elif timeit.default_timer() > end:
-            os.killpg(os.getpgid(p.pid), 15)
-            break
-    #time.sleep(3)
-    #os.killpg(os.getpgid(p.pid), 15)
-    result, error = p.communicate()
-    print(str(timeit.default_timer() - start))
-    return result, error
-
-def run_linux4(command):
-    start = timeit.default_timer()
-    p = subprocess.Popen(
-        command,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        shell=True
-        ,preexec_fn=os.setsid
-    )
-
-    pg = os.getpgid(p.pid)
-    tend = lambda pg: os.killpg(pg, 15)
-    end = 2
-
-    t = threading.Timer(6, tend, [pg])
-    t.start()
-    result, error = p.communicate()
-    t.cancel()
-    print(str(timeit.default_timer() - start))
-    return result, error
-
-def curses_color_setup():
-    curses.init_pair(1, curses.COLOR_BLACK, curses.COLOR_YELLOW)
-    curses.init_pair(2, curses.COLOR_BLACK, curses.COLOR_RED)
-
-
-def start_curses():
-    stdscr = curses.initscr()
-    curses.noecho()
-    curses.cbreak()
-    curses.curs_set(0)
-    stdscr.keypad(True)
-    return stdscr
+# ----------------------------------------------------------------------------------------------------------------------
+#       Terminate
+# ----------------------------------------------------------------------------------------------------------------------
 
 
 def terminate_processes():
     time.sleep(.15)
-    procs = Main.process_frame_controllers + [Main.process_event_controller]
+    procs = Procs.process_frame_controllers + [Procs.process_event_controller]
     for proc in procs:
         if proc.exitcode is None:
             term_sig = 2
@@ -852,85 +875,32 @@ def terminate_curses():
     curses.curs_set(1)
     curses.endwin()
 
-def initialize_key_press_process(self):
-    self.process_key_press = multiprocessing.Process(
-        target=self.key_press,
-        args=(
-            self.system_queue
-        ))
 
-class Main:
-    event_queues = []
-    system_queues = []
-    process_frame_controllers = []
-    process_event_controller = []
+# ----------------------------------------------------------------------------------------------------------------------
+#       General Functions
+# ----------------------------------------------------------------------------------------------------------------------
 
-def main_controller():
-    if Settings.curses:
-        stdscr = start_curses()
-        curses.start_color()
-        curses_color_setup()
-    else:
-        stdscr = None
+def run_linux(command):
+    start = timeit.default_timer()
+    result, error = subprocess.Popen(
+        command,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        shell=True
+        ).communicate()
+    print(str(timeit.default_timer() - start))
+    return result, error
 
-    Settings.start = timeit.default_timer()
-    Settings.stop = Settings.start + Settings.duration
-    Settings.start_all = [Settings.start] * Settings.commands_count
-    Settings.key = Settings.start
-
-    Main.system_queue = multiprocessing.Queue(1)
-    frame_controller_seed = FrameControllers()
-    for x in range(Settings.commands_count):
-        # result, error = run_linux4(Settings.commands[x])
-        # print(len(result))
-        # sys.exit()
-
-        Settings.window_id.append(x)
-        Settings.debug("state_timeout")
-        Main.event_queues.append("")
-        Main.system_queues.append("")
-        Main.process_frame_controllers.append("")
-
-
-        Main.event_queues[x] = multiprocessing.Queue(1)
-        Main.system_queues[x] = multiprocessing.Queue(1)
-        Main.process_frame_controllers[x] = multiprocessing.Process(
-            target=frame_controller_seed.frame_controller,
-            args=(
-                Settings.commands[x],
-                Settings.intervals[x],
-                Settings.start_all[x],
-                Settings.precision[x],
-                Settings.window_id[x],
-                Settings.draw_window_id,
-                Main.event_queues[x],
-                Main.system_queues[x]
-            ))
-
-    for x in range(Settings.commands_count):
-        Main.process_frame_controllers[x].start()
-
-    if True:
-        Main.process_event_controller = multiprocessing.Process(
-            target=event_controller,
-            args=(
-                stdscr,
-                Settings.draw_window_id,
-                Main.event_queues,
-                Main.system_queues
-            ))
-        Main.process_event_controller.start()
-    Settings.debug("aaaaaa event start", 1)
-
-    time.sleep(Settings.stop - Settings.start)
-
+# ----------------------------------------------------------------------------------------------------------------------
+#       Start
+# ----------------------------------------------------------------------------------------------------------------------
 
 if __name__ == "__main__":
 
     # noinspection PyPep8
     terminate = True
     try:
-        main_controller()
+        main()
         #time.sleep("dd")
     except KeyboardInterrupt:
         print("")
@@ -940,16 +910,3 @@ if __name__ == "__main__":
             terminate_processes()
         if Settings.curses is True:
             terminate_curses()
-
-
-        #curses.isendwin() is not True:
-        # filename = "/tmp/watchp" + str(x) + ".tmp"
-        # with open(filename, "w") as f:
-        #     f.write("#!/bin/sh\n")
-        #     f.write(Settings.commands[x])
-        # run_linux("chmod +x " + str(filename))
-        # #Settings.commands[x] = filename
-        # result, error = run_linux3(Settings.commands[x])
-        # print(result)
-        # print(error)
-        # sys.exit()
