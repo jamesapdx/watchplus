@@ -20,79 +20,139 @@ import argparse
 # ----------------------------------------------------------------------------------------------------------------------
 
 # ----------------------------------------------------------------------------------------------------------------------
-#       Initialize
+#       Settings
 # ----------------------------------------------------------------------------------------------------------------------
 
+class Settings:
+    curses = False
+    curses = True
+    cooldown_ticks = 4
+    cooldown_color_map = [0, 1] + ([2] * (cooldown_ticks + 1))
+    windows_count = 1
+    script_types = [".py",".sh"]
+    scripts_folder = "bwatch.d"
+    cwd = os.getcwd()
+    app = os.path.basename(__file__)
+    variable_name = "variable"
 
 class Debug:
     debug_level = 0
-    debug_mode = False
     debug_mode = True
+    debug_mode = False
 
     @classmethod
     def debug(cls, item, level=0):
         if Debug.debug_mode is True and Settings.curses is False and Debug.debug_level >= level:
             print(item)
 
-def argparse():
-    parser = argparse.ArgumentParser()
-
-
-    parser.add_argument("commands", nargs="*" )
-    parser.add_argument("-n", "--interval", type="int")
-    parser.add_argument("-i", "--imprecise", action="store_true")
-    parser.add_argument("-p", "--plain", action="store_true")
-    parser.add_argument("-s", "--source")
-    parser.add_argument("-v1", "--variables1", nargs="+")
-    parser.add_argument("-v2", "--variables2", nargs="+")
-    parser.add_argument("-v3", "--variables3", nargs="+")
-    parser.add_argument("-v4", "--variables3", nargs="+")
+# ----------------------------------------------------------------------------------------------------------------------
+#       Initialize
+# ----------------------------------------------------------------------------------------------------------------------
 
 
 def initwatch():
-    if arg folders
-        loop create commands
-    if arg commands
-        loop create commands
-    otherwise if default folder
-        loop create commands
-    else
-        bye
+    args = process_argparse()
+    if args.commands:
 
 
+    start_procs()
+
+    # if arg folders
+    #     loop create commands
+    # if arg commands
+    #     loop create commands
+    # otherwise if default folder
+    #     loop create commands
+    # else
+    #     bye
+
+    # if True:
+    #     commands = [
+    #         'date +%N; dmesg',
+    #         'date +%N',
+    #         'python -c "import timeit; print(str(timeit.default_timer()))"',
+    #         'echo "abcgxz abc \n123456\n7890 !@#$&^"',
+    #         'date +%N',
+    #         'date; sleep 22; sleep 11; date',
+    #         'date',
+    #         'date',
+    #         './test.sh',
+    #         'dmesg' ]
     pass
 
-class Commands:
+def process_argparse():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("commands", nargs="*" )
+    parser.add_argument("-n", "--interval", type="int")
+    parser.add_argument("-d", "--duration", type="int")
+    parser.add_argument("-i", "--imprecise", action="store_true")
+    parser.add_argument("-p", "--plain", action="store_true")
+    parser.add_argument("-V1", nargs="*")
+    parser.add_argument("-V2", nargs="*")
+    parser.add_argument("-V3", nargs="*")
+    parser.add_argument("-V4", nargs="*")
+    parser.add_argument("-s", "--scripts", nargs="*")
+    parser.add_argument("-a", "--default-scripts")
+    args = parser.parse_args()
+    return args
 
-    def __init__(self):
-        self.duration = 41
-        self.curses = False
-        self.curses = True
+def process_folder_script_path(file_object):
+    scripts = []
+    file_object = os.path.abspath(file_object)
+    if os.path.exists(file_object) is True:
+        if os.path.isdir(file_object) is True:
+            scripts = get_scripts_from_directory(file_object)
+        else:
+            scripts.append(file_object)
+    return scripts
+
+def get_scripts_from_directory(directory):
+    scripts = []
+    if os.path.exists(file_object) and os.path.isdir(file_object):
+        ls = os.listdir(directory)
+        for item in ls:
+            for script_type in Settings.script_types:
+                if not item.startswith(".") and not item.endswith(Settings.app) and item.endswith(script_type):
+                    scripts.append(os.path.join(directory, item))
+    return scripts
+
+def load_default_folder():
+    scripts = []
+    if os.path.basename(Settings.cwd) == Settings.scripts_folder:
+        # this app appears to be running from inside the scripts_folder, so use it
+        directory = cwd
+    else:
+        directory = os.path.join(cwd, Settings.scripts_folder)
+    scripts = get_scripts_from_directory(directory)
+    return scripts
+
+def substitute_variables():
+    str.replace("$V1",V1).replace("$V1",V1).replace("$V1",V1).replace("$V1",V1)
+    str.replace("$V2",V2).replace("$V2",V2).replace("$V2",V2).replace("$V2",V2)
+    str.replace("$V3",V3).replace("$V3",V3).replace("$V3",V3).replace("$V3",V3)
+    str.replace("$V4",V4).replace("$V4",V4).replace("$V4",V4).replace("$V4",V4)
+
+class Commands:
+    start_all = None
+    stop_all = None
+    commands_count = len(commands)
+
+    def __init__(self,command,interval=1,duration=0,imprecise=False,v1=None,v2=None,v3=None,v4=None):
+        self.command_orig = command
+        self.command = None
+        self.interval = interval
+        self.duration = duration
+        self.imprecise = imprecise
+        self.v1 = v1
         self.start = None
         self.stop = None
-        self.start_all = None
-        self.stop_all = None
-        self.commands = ['date']
-        if True:
-                    commands = [
-                    'date +%N; dmesg',
-                    'date +%N',
-                    'python -c "import timeit; print(str(timeit.default_timer()))"',
-                    'echo "abcgxz abc \n123456\n7890 !@#$&^"',
-                    'date +%N',
-                    'date; sleep 22; sleep 11; date',
-                    'date',
-                    'date',
-                    './test.sh',
-                    'dmesg' ]
-        self.commands_count = len(self.commands)
-        self.intervals = [1] * self.commands_count
-        self.precision = [True] * self.commands_count
-        self.cooldown_ticks = 4
-        self.cooldown_color_map = [0, 1] + ([2] * (self.cooldown_ticks + 1))
-        self.windows_count = 1
-        self.window_id = []
+        #self.window_id = []
         self.draw_window_id = 0
+
+    def new_command(self):
+        pass
+
+    def new_command_from
 
 def curses_color_setup():
     curses.init_pair(1, curses.COLOR_BLACK, curses.COLOR_YELLOW)
@@ -112,6 +172,7 @@ class Procs:
     process_frame_controllers = []
     process_event_controller = []
 
+
 def initialize_key_press_process(self):
     self.process_key_press = multiprocessing.Process(
         target=self.key_press,
@@ -119,7 +180,8 @@ def initialize_key_press_process(self):
             self.system_queue
         ))
 
-def main():
+def start_procs():
+
     if Settings.curses:
         stdscr = start_curses()
         curses.start_color()
@@ -135,7 +197,7 @@ def main():
     Procs.system_queue = multiprocessing.Queue(1)
     frame_controller_seed = FrameControllers()
     for x in range(Settings.commands_count):
-        # result, error = run_linux4(Settings.commands[x])
+        # result, error = run_linux4(Settings.Settings.x])
         # print(len(result))
         # sys.exit()
 
@@ -237,14 +299,14 @@ class FrameControllers:
         Stores all frame and heatmap data
         Pushes the frame and heatmap data to the draw window via a queue
     """
-    instances = []
+    #delete instances = []
 
     def __init__(self):
         """ As this class will be isolated in a multiprocess process, most fields are initialized in the
         self.controller() function, only the storage fields are defined here"""
         # class fields
-        FrameControllers.instances.append(self)
-        self.command_id = len(FrameControllers.instances) - 1
+        #delete FrameControllers.instances.append(self)
+        #delete self.command_id = len(FrameControllers.instances) - 1
 
         # frame storage fields
         self.frame = []
@@ -901,7 +963,7 @@ if __name__ == "__main__":
     # noinspection PyPep8
     terminate = True
     try:
-        main()
+        initwatch()
         #time.sleep("dd")
     except KeyboardInterrupt:
         print("")
