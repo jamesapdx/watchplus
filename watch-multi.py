@@ -33,7 +33,12 @@ class Settings:
     scripts_folder = "bwatch.d"
     cwd = os.getcwd()
     app = os.path.basename(__file__)
-    variable_name = "variable"
+
+class Defaults:
+    interval = 1
+    duration = 0
+    imprecise = False
+    plain = False
 
 class Debug:
     debug_level = 0
@@ -49,36 +54,49 @@ class Debug:
 #       Initialize
 # ----------------------------------------------------------------------------------------------------------------------
 
+# if True:
+#     commands = [
+#         'date +%N; dmesg',
+#         'date +%N',
+#         'python -c "import timeit; print(str(timeit.default_timer()))"',
+#         'echo "abcgxz abc \n123456\n7890 !@#$&^"',
+#         'date +%N',
+#         'date; sleep 22; sleep 11; date',
+#         'date',
+#         'date',
+#         './test.sh',
+#         'dmesg' ]
 
 def initwatch():
     args = process_argparse()
-    if args.commands:
+    commands = []
+    run_settings = {  "interval"  : args.interval,
+                    "duration"  : args.duraton,
+                    "imprecise" : args.imprecise,
+                    "plain"     : args.plain,
+                    "variable"  : args.variables}
+    for i_command in args.commands:
+        commands.append(Commands(command = i_command, type="command",**run_settings))
+    for arg_script in args.scripts:
+        scripts = process_folder_script_path(arg_script)
+        for script in scripts:
+            if args.override:
+                commands.append(Commands(command = i_script, type="script", **parameters))
+            else:
+                commands.append(Commands(command = i_script, type="script"))
+    if not args.commands and not args.scripts:
+        scripts = load_default_folder()
+        for i_script in scripts:
+            if args.override:
+                commands.append(Commands(command = i_script, type="script", **parameters))
+            else:
+                commands.append(Commands(command = i_script, type="script"))
 
+    if len(commands) == 0:
+        #TO DO improve
+        print("no commands or scripts found")
 
     start_procs()
-
-    # if arg folders
-    #     loop create commands
-    # if arg commands
-    #     loop create commands
-    # otherwise if default folder
-    #     loop create commands
-    # else
-    #     bye
-
-    # if True:
-    #     commands = [
-    #         'date +%N; dmesg',
-    #         'date +%N',
-    #         'python -c "import timeit; print(str(timeit.default_timer()))"',
-    #         'echo "abcgxz abc \n123456\n7890 !@#$&^"',
-    #         'date +%N',
-    #         'date; sleep 22; sleep 11; date',
-    #         'date',
-    #         'date',
-    #         './test.sh',
-    #         'dmesg' ]
-    pass
 
 def process_argparse():
     parser = argparse.ArgumentParser()
@@ -87,12 +105,10 @@ def process_argparse():
     parser.add_argument("-d", "--duration", type="int")
     parser.add_argument("-i", "--imprecise", action="store_true")
     parser.add_argument("-p", "--plain", action="store_true")
-    parser.add_argument("-V1", nargs="*")
-    parser.add_argument("-V2", nargs="*")
-    parser.add_argument("-V3", nargs="*")
-    parser.add_argument("-V4", nargs="*")
+    parser.add_argument("-v", "--variables", nargs="*")
     parser.add_argument("-s", "--scripts", nargs="*")
     parser.add_argument("-a", "--default-scripts")
+    parser.add_argument("-o", "--override", action="store_true")
     args = parser.parse_args()
     return args
 
@@ -126,33 +142,63 @@ def load_default_folder():
     scripts = get_scripts_from_directory(directory)
     return scripts
 
-def substitute_variables():
-    str.replace("$V1",V1).replace("$V1",V1).replace("$V1",V1).replace("$V1",V1)
-    str.replace("$V2",V2).replace("$V2",V2).replace("$V2",V2).replace("$V2",V2)
-    str.replace("$V3",V3).replace("$V3",V3).replace("$V3",V3).replace("$V3",V3)
-    str.replace("$V4",V4).replace("$V4",V4).replace("$V4",V4).replace("$V4",V4)
-
 class Commands:
     start_all = None
     stop_all = None
     commands_count = len(commands)
 
-    def __init__(self,command,interval=1,duration=0,imprecise=False,v1=None,v2=None,v3=None,v4=None):
-        self.command_orig = command
+    def __init__(self, command, ):
+        self.command_orig = None
         self.command = None
-        self.interval = interval
-        self.duration = duration
-        self.imprecise = imprecise
-        self.v1 = v1
+        self.type = None
+
+        #run settings
+        self.interval = Defaults.interval
+        self.duration = Defaults.duration
+        self.imprecise = Defaults.imprecise
+        self.plain = Defaults.plain
+        self.instances = None
+
         self.start = None
         self.stop = None
         #self.window_id = []
         self.draw_window_id = 0
 
-    def new_command(self):
+        self.script_settings = {"interval":None,
+                               "duration":None,
+                               "imprecise":None,
+                               "plain":None,
+                               "instances":None
+                               }
+
+    def set_run_settings(self,command,type,interval=None,duration=None,imprecise=None,plain=None,instances=None):
+        self.interval = interval if interval else self.interval
+        self.duration = duration if duration else self.duration
+        self.imprecise = imprecise if imprecise else self.imprecise
+        self.plain = plain if plain else self.plain
+        self.instances = instances
+
+    def validate_run_settings(self):
+        #TO DO
+        validate = True
+        return validate
+
+    def init_command(self):
+        #TO DO set subcommands, instances
         pass
 
-    def new_command_from
+    def init_script(self):
+        with open(command) as file:
+            lines = file.read().splitlines()
+
+        for line in lines:
+            for key in self.settings:
+                if line.startswith(key + "=") and self.settings[key] is None:
+                    setting = line + " ; echo $" + key
+                    result, error = run_linux(setting)
+                    self.settings[key] = result.split(" ")
+        self.set_run_settings(**settings)
+        #TO DO set subcommands, instances
 
 def curses_color_setup():
     curses.init_pair(1, curses.COLOR_BLACK, curses.COLOR_YELLOW)
@@ -755,6 +801,8 @@ class FrameGenerators:
         self.completion_time = timeit.default_timer()
 
         # break result into a line by line list
+        # python 2 Popen returns a string, python 3 returns bytecode, so handle both here
+        # TO DO incorporate error
         try:
             self.frame[self.current] = result.decode().splitlines()
         except AttributeError:
@@ -944,14 +992,20 @@ def terminate_curses():
 # ----------------------------------------------------------------------------------------------------------------------
 
 def run_linux(command):
-    start = timeit.default_timer()
     result, error = subprocess.Popen(
         command,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         shell=True
         ).communicate()
-    print(str(timeit.default_timer() - start))
+    try:
+        result = result.decode()
+    except AttributeError:
+        result = str(result)
+    try:
+        error = error.decode()
+    except AttributeError:
+        error = str(error)
     return result, error
 
 # ----------------------------------------------------------------------------------------------------------------------
