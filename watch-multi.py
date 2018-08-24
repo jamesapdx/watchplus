@@ -67,48 +67,87 @@ class Debug:
 #         './test.sh',
 #         'dmesg' ]
 
-def initwatch():
+def initbwatch():
     args = process_argparse()
     commands = []
-    run_settings = {  "interval"  : args.interval,
-                    "duration"  : args.duraton,
-                    "imprecise" : args.imprecise,
-                    "plain"     : args.plain,
-                    "variable"  : args.variables}
-    for i_command in args.commands:
-        commands.append(Commands(command = i_command, type="command",**run_settings))
-    for arg_script in args.scripts:
-        scripts = process_folder_script_path(arg_script)
-        for script in scripts:
-            if args.override:
-                commands.append(Commands(command = i_script, type="script", **parameters))
-            else:
-                commands.append(Commands(command = i_script, type="script"))
-    if not args.commands and not args.scripts:
-        scripts = load_default_folder()
-        for i_script in scripts:
-            if args.override:
-                commands.append(Commands(command = i_script, type="script", **parameters))
-            else:
-                commands.append(Commands(command = i_script, type="script"))
+    c = None
 
-    if len(commands) == 0:
+    # load settings if there is a command via the command line flags
+    settings_from_flags = {"interval" : args.interval,
+                            "duration" : args.duration,
+                            "imprecise" : args.imprecise,
+                            "plain" : args.plain,
+                            "instances" : args.instances}
+    if args.commands:
+        for item in args.commands:
+            c = Commands(command = item, command_type="command")
+            c.set_settings(**settings_from_flags)
+            c.init_command()
+
+    # load settings from any scripts specified at run time via the command line flags
+    if args.scripts:
+        for item in args.scripts:
+            scripts = process_folder_script_path(item)
+            for script in scripts:
+                if args.override:
+                    c = Commands(command = script, command_type="script")
+                    c.set_settings_from_script()
+                    c.set_settings(**settings_from_flags)
+                else:
+                    c = Commands(command = script, type="script")
+                    c.set_settings_from_script()
+
+    # load settings from any scripts specified at run time via the command line flags
+    if (not args.commands and not args.scripts) or args.default_scripts:
+        scripts = load_default_folder()
+        if scripts:
+            for script in scripts:
+                if args.override:
+                    c = Commands(command = script, command_type="script")
+                    c.set_settings_from_script()
+                    c.set_settings(**settings_from_flags)
+                else:
+                    c = Commands(command = script, command_type="script")
+                    c.set_settings_from_script()
+
+    for c in Commands.commands:
+        c.test_print()
+
+    if c is None:
         #TO DO improve
         print("no commands or scripts found")
 
-    start_procs()
+    #start_procs()
+
 
 def process_argparse():
     parser = argparse.ArgumentParser()
-    parser.add_argument("commands", nargs="*" )
-    parser.add_argument("-n", "--interval", type="int")
-    parser.add_argument("-d", "--duration", type="int")
-    parser.add_argument("-i", "--imprecise", action="store_true")
-    parser.add_argument("-p", "--plain", action="store_true")
-    parser.add_argument("-v", "--variables", nargs="*")
-    parser.add_argument("-s", "--scripts", nargs="*")
-    parser.add_argument("-a", "--default-scripts")
-    parser.add_argument("-o", "--override", action="store_true")
+    parser.add_argument("commands", nargs="*",
+                        help="[optional] command(s) to be run including flags. use -i for multiple instances. " +
+                        "use -s for bwatch scripts instead")
+    parser.add_argument("-n", "--interval", dest="interval", type=int,
+                        metavar="<sec>",
+                        help="interval in seconds, no min, default = 1")
+    parser.add_argument("-d", "--duration", dest="duration", type=int,
+                        metavar="<sec>",
+                        help="quit after <sec> seconds")
+    parser.add_argument("-x", "--not-precise", dest="imprecise", action="store_true",
+                        help="-i seconds inserted between frames, no dropped frames. without this flag, precise is " +
+                        "used and each frame is exactly -i seconds apart, frame is dropped if not fast enough")
+    parser.add_argument("-p", "--plain", dest="plain", action="store_true",
+                        help="do not highlight any changes")
+    parser.add_argument("-i", "--instances", dest="instances", nargs="*",
+                        metavar="<$1>",
+                        help="run a seperate instance of command or script, and replace $1 with <$1> arguments, one " +
+                        "argument per instance. see readme for details")
+    parser.add_argument("-s", "--scripts", dest="scripts", nargs="*",
+                        metavar="<scr>",
+                        help="bwatch script(s) to be run, in addition to any commands")
+    parser.add_argument("-a", "--default-scripts", dest="default_scripts", action="store_true",
+                        help="also run scripts from the default folder, ./watch.d or ../watch.d or ~/watch.d")
+    parser.add_argument("-o", "--override", dest="override", action="store_true",
+                        help="bwatch scripts read settings flags from inside the script itself, use command " +
+                        "line flags instead if a flag is specified")
     args = parser.parse_args()
     return args
 
@@ -124,7 +163,7 @@ def process_folder_script_path(file_object):
 
 def get_scripts_from_directory(directory):
     scripts = []
-    if os.path.exists(file_object) and os.path.isdir(file_object):
+    if os.path.exists(directory) and os.path.isdir(directory):
         ls = os.listdir(directory)
         for item in ls:
             for script_type in Settings.script_types:
@@ -136,21 +175,22 @@ def load_default_folder():
     scripts = []
     if os.path.basename(Settings.cwd) == Settings.scripts_folder:
         # this app appears to be running from inside the scripts_folder, so use it
-        directory = cwd
+        directory = Settings.cwd
     else:
-        directory = os.path.join(cwd, Settings.scripts_folder)
+        directory = os.path.join(Settings.cwd, Settings.scripts_folder)
     scripts = get_scripts_from_directory(directory)
     return scripts
 
 class Commands:
     start_all = None
     stop_all = None
+    commands = []
     commands_count = len(commands)
 
-    def __init__(self, command, ):
-        self.command_orig = None
+    def __init__(self, command, command_type):
+        self.command_orig = command
         self.command = None
-        self.type = None
+        self.command_type = command_type
 
         #run settings
         self.interval = Defaults.interval
@@ -164,21 +204,42 @@ class Commands:
         #self.window_id = []
         self.draw_window_id = 0
 
-        self.script_settings = {"interval":None,
-                               "duration":None,
-                               "imprecise":None,
-                               "plain":None,
-                               "instances":None
-                               }
+        Commands.commands.append(self)
 
-    def set_run_settings(self,command,type,interval=None,duration=None,imprecise=None,plain=None,instances=None):
+    def test_print(self):
+        print(self.command_orig)
+        print(self.command)
+        print(self.command_type)
+
+        print(self.interval)
+        print(self.duration)
+        print(self.imprecise)
+        print(self.plain)
+        print(self.instances)
+
+
+    def set_settings(self,interval=None,duration=None,imprecise=None,plain=None,instances=None):
         self.interval = interval if interval else self.interval
         self.duration = duration if duration else self.duration
         self.imprecise = imprecise if imprecise else self.imprecise
         self.plain = plain if plain else self.plain
         self.instances = instances
 
-    def validate_run_settings(self):
+    def set_settings_from_script(self):
+        self.temp_settings = {"interval":None, "duration":None, "imprecise":None, "plain":None, "instances":None }
+
+        with open(command_orig) as file:
+            lines = file.read().splitlines()
+
+        for line in lines:
+            for key in self.temp_settings:
+                if line.startswith(key + "=") and self.temp_settings[key] is None:
+                    result, error = run_linux(line + " ; echo $" + key)
+                    self.temp_settings[key] = result.split(" ")
+
+        self.set_settings(**settings)
+
+    def validate_settings(self):
         #TO DO
         validate = True
         return validate
@@ -188,17 +249,8 @@ class Commands:
         pass
 
     def init_script(self):
-        with open(command) as file:
-            lines = file.read().splitlines()
-
-        for line in lines:
-            for key in self.settings:
-                if line.startswith(key + "=") and self.settings[key] is None:
-                    setting = line + " ; echo $" + key
-                    result, error = run_linux(setting)
-                    self.settings[key] = result.split(" ")
-        self.set_run_settings(**settings)
         #TO DO set subcommands, instances
+        pass
 
 def curses_color_setup():
     curses.init_pair(1, curses.COLOR_BLACK, curses.COLOR_YELLOW)
@@ -1017,8 +1069,8 @@ if __name__ == "__main__":
     # noinspection PyPep8
     terminate = True
     try:
-        initwatch()
-        #time.sleep("dd")
+        terminate = False #TEMP take out
+        initbwatch()
     except KeyboardInterrupt:
         print("")
         terminate = False
