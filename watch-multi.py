@@ -30,6 +30,7 @@ class Settings:
     cooldown_color_map = [0, 1] + ([2] * (cooldown_ticks + 1))
     windows_count = 1
     script_types = [".py",".sh"]
+    scripts_path = ["~/","../","."]
     scripts_folder = "bwatch.d"
     cwd = os.getcwd()
     app = os.path.basename(__file__)
@@ -173,12 +174,24 @@ def get_scripts_from_directory(directory):
 
 def load_default_folder():
     scripts = []
-    if os.path.basename(Settings.cwd) == Settings.scripts_folder:
-        # this app appears to be running from inside the scripts_folder, so use it
-        directory = Settings.cwd
-    else:
-        directory = os.path.join(Settings.cwd, Settings.scripts_folder)
-    scripts = get_scripts_from_directory(directory)
+    print(Settings.cwd)
+    print("")
+    for path in Settings.scripts_path:
+        # walk through all possible paths, grab scripts from the first one that exists
+        path = os.path.join(path, Settings.scripts_folder)
+        d1 = os.path.abspath(os.path.join(Settings.cwd, path))
+        d2 = os.path.expanduser(path)
+        print(path)
+        print(d1)
+        print(d2)
+        print("")
+        if os.path.isdir(d1):
+            scripts = get_scripts_from_directory(d1)
+            break
+        elif os.path.isdir(d2):
+            scripts = get_scripts_from_directory(d2)
+            break
+    print(scripts)
     return scripts
 
 class Commands:
@@ -210,12 +223,18 @@ class Commands:
         print(self.command_orig)
         print(self.command)
         print(self.command_type)
-
+        print("")
         print(self.interval)
         print(self.duration)
         print(self.imprecise)
         print(self.plain)
         print(self.instances)
+        print("")
+        print(type(self.interval))
+        print(type(self.duration))
+        print(type(self.imprecise))
+        print(type(self.plain))
+        print(type(self.instances))
 
 
     def set_settings(self,interval=None,duration=None,imprecise=None,plain=None,instances=None):
@@ -226,18 +245,20 @@ class Commands:
         self.instances = instances
 
     def set_settings_from_script(self):
-        self.temp_settings = {"interval":None, "duration":None, "imprecise":None, "plain":None, "instances":None }
+        temp_settings = {"interval":None, "duration":None, "imprecise":None, "plain":None, "instances":None }
+        temp_set_type = {"interval":int , "duration":int , "imprecise":bool, "plain":bool, "instances":str}
 
-        with open(command_orig) as file:
+        with open(self.command_orig) as file:
             lines = file.read().splitlines()
 
+        #TO DO add error handling
         for line in lines:
-            for key in self.temp_settings:
-                if line.startswith(key + "=") and self.temp_settings[key] is None:
+            for key in temp_settings:
+                if line.startswith(key + "=") and temp_settings[key] is None:
                     result, error = run_linux(line + " ; echo $" + key)
-                    self.temp_settings[key] = result.split(" ")
+                    temp_settings[key] = temp_set_type[key](result.rstrip("\n"))
 
-        self.set_settings(**settings)
+        self.set_settings(**temp_settings)
 
     def validate_settings(self):
         #TO DO
