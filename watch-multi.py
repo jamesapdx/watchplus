@@ -11,6 +11,7 @@ import threading
 import time
 import timeit
 import argparse
+import copy
 
 # ----------------------------------------------------------------------------------------------------------------------
 #       working on:
@@ -29,7 +30,7 @@ class Settings:
     cooldown_ticks = 4
     cooldown_color_map = [0, 1] + ([2] * (cooldown_ticks + 1))
     windows_count = 1
-    script_types = [".py",".sh"]
+    scripts_types = [".py",".sh"]
     scripts_path = ["~/","../","."]
     scripts_folder = "bwatch.d"
     cwd = os.getcwd()
@@ -67,65 +68,11 @@ class Debug:
 #         'date',
 #         './test.sh',
 #         'dmesg' ]
-
-def initbwatch():
-    args = process_argparse()
-    commands = []
-    c = None
-
-    # load settings if there is a command via the command line flags
-    settings_from_flags = {"interval" : args.interval,
-                            "duration" : args.duration,
-                            "imprecise" : args.imprecise,
-                            "plain" : args.plain,
-                            "instances" : args.instances}
-    if args.commands:
-        for item in args.commands:
-            c = Commands(command = item, command_type="command")
-            c.set_settings(**settings_from_flags)
-            c.init_command()
-
-    # load settings from any scripts specified at run time via the command line flags
-    if args.scripts:
-        for item in args.scripts:
-            scripts = process_folder_script_path(item)
-            for script in scripts:
-                if args.override:
-                    c = Commands(command = script, command_type="script")
-                    c.set_settings_from_script()
-                    c.set_settings(**settings_from_flags)
-                else:
-                    c = Commands(command = script, type="script")
-                    c.set_settings_from_script()
-
-    # load settings from any scripts specified at run time via the command line flags
-    if (not args.commands and not args.scripts) or args.default_scripts:
-        scripts = load_default_folder()
-        if scripts:
-            for script in scripts:
-                if args.override:
-                    c = Commands(command = script, command_type="script")
-                    c.set_settings_from_script()
-                    c.set_settings(**settings_from_flags)
-                else:
-                    c = Commands(command = script, command_type="script")
-                    c.set_settings_from_script()
-
-    for c in Commands.commands:
-        c.test_print()
-
-    if c is None:
-        #TO DO improve
-        print("no commands or scripts found")
-
-    #start_procs()
-
-
 def process_argparse():
     parser = argparse.ArgumentParser()
     parser.add_argument("commands", nargs="*",
                         help="[optional] command(s) to be run including flags. use -i for multiple instances. " +
-                        "use -s for bwatch scripts instead")
+                             "use -s for bwatch scripts instead")
     parser.add_argument("-n", "--interval", dest="interval", type=int,
                         metavar="<sec>",
                         help="interval in seconds, no min, default = 1")
@@ -134,13 +81,13 @@ def process_argparse():
                         help="quit after <sec> seconds")
     parser.add_argument("-x", "--not-precise", dest="imprecise", action="store_true",
                         help="-i seconds inserted between frames, no dropped frames. without this flag, precise is " +
-                        "used and each frame is exactly -i seconds apart, frame is dropped if not fast enough")
+                             "used and each frame is exactly -i seconds apart, frame is dropped if not fast enough")
     parser.add_argument("-p", "--plain", dest="plain", action="store_true",
                         help="do not highlight any changes")
     parser.add_argument("-i", "--instances", dest="instances", nargs="*",
                         metavar="<$1>",
                         help="run a seperate instance of command or script, and replace $1 with <$1> arguments, one " +
-                        "argument per instance. see readme for details")
+                             "argument per instance. see readme for details")
     parser.add_argument("-s", "--scripts", dest="scripts", nargs="*",
                         metavar="<scr>",
                         help="bwatch script(s) to be run, in addition to any commands")
@@ -148,219 +95,194 @@ def process_argparse():
                         help="also run scripts from the default folder, ./watch.d or ../watch.d or ~/watch.d")
     parser.add_argument("-o", "--override", dest="override", action="store_true",
                         help="bwatch scripts read settings flags from inside the script itself, use command " +
-                        "line flags instead if a flag is specified")
+                             "line flags instead if a flag is specified")
     args = parser.parse_args()
     return args
 
-def process_folder_script_path(file_object):
-    scripts = []
-    file_object = os.path.abspath(file_object)
-    if os.path.exists(file_object) is True:
-        if os.path.isdir(file_object) is True:
-            scripts = get_scripts_from_directory(file_object)
+class Bwatch:
+
+    def initbwatch():
+        args = process_argparse()
+        commands = []
+        c = None
+
+        # load settings if there is a command via the command line flags
+        settings_from_flags = {"instances" : args.instances,
+                               "interval" : args.interval,
+                                "duration" : args.duration,
+                                "imprecise" : args.imprecise,
+                                "plain" : args.plain,
+                                }
+        if args.commands:
+            for item in args.commands:
+                c = Commands(command = item, command_type="command")
+                try:
+                    c.set_all_settings(**settings_from_flags)
+                except (TypeError, ValueError, OverflowError):
+                    print("type error")
+                c.init_command()
+
+        # load settings from any scripts specified at run time via the command line flags
+        if args.scripts:
+            for item in args.scripts:
+                scripts = process_folder_script_path(item)
+                for script in scripts:
+                    try:
+                        c = Commands(command = script, command_type="script")
+                        c.set_all_settings_from_script()
+                        if args.override:
+                                c.set_all_settings(**settings_from_flags)
+                    except (TypeError, ValueError, OverflowError):
+                        print("type error")
+                    # TO DO file handling error
+
+        # load settings from any scripts specified at run time via the command line flags
+        if (not args.commands and not args.scripts) or args.default_scripts:
+            scripts = load_default_folder()
+            if scripts:
+                for script in scripts:
+                    try:
+                        c = Commands(command = script, command_type="script")
+                        c.set_all_settings_from_script()
+                        if args.override:
+                                c.set_all_settings(**settings_from_flags)
+                    except (TypeError, ValueError, OverflowError):
+                        print("type error")
+                    # TO DO file handling error
+
+        for c in Commands.commands:
+            c.test_print()
+
+        if c is None:
+            #TO DO improve
+            print("no commands or scripts found")
+
+        #start_procs()
+
+    def process_folder_script_path(file_object):
+        scripts = []
+        file_object = os.path.abspath(file_object)
+        if os.path.exists(file_object) is True:
+            if os.path.isdir(file_object) is True:
+                scripts = get_scripts_from_directory(file_object)
+            else:
+                scripts.append(file_object)
+        return scripts
+
+    def get_scripts_from_directory(directory):
+        scripts = []
+        if os.path.exists(directory) and os.path.isdir(directory):
+            ls = os.listdir(directory)
+            for item in ls:
+                for scripts_type in Settings.scripts_types:
+                    if not item.startswith(".") and not item.endswith(Settings.app) and item.endswith(scripts_type):
+                        scripts.append(os.path.join(directory, item))
+        return scripts
+
+    def load_default_folder():
+        scripts = []
+        for path in Settings.scripts_path:
+            # walk through all possible paths, grab scripts from the first one that exists
+            path = os.path.join(path, Settings.scripts_folder)
+            d1 = os.path.abspath(os.path.join(Settings.cwd, path))
+            d2 = os.path.expanduser(path)
+            if os.path.isdir(d1):
+                scripts = get_scripts_from_directory(d1)
+                break
+            elif os.path.isdir(d2):
+                scripts = get_scripts_from_directory(d2)
+                break
+        return scripts
+
+    def curses_color_setup():
+        curses.init_pair(1, curses.COLOR_BLACK, curses.COLOR_YELLOW)
+        curses.init_pair(2, curses.COLOR_BLACK, curses.COLOR_RED)
+
+    def start_curses():
+        stdscr = curses.initscr()
+        curses.noecho()
+        curses.cbreak()
+        curses.curs_set(0)
+        stdscr.keypad(True)
+        return stdscr
+
+    class Procs:
+        event_queues = []
+        system_queues = []
+        process_frame_controllers = []
+        process_event_controller = []
+
+
+    def initialize_key_press_process(self):
+        self.process_key_press = multiprocessing.Process(
+            target=self.key_press,
+            args=(
+                self.system_queue
+            ))
+
+    def start_procs():
+
+        if Settings.curses:
+            stdscr = start_curses()
+            curses.start_color()
+            curses_color_setup()
         else:
-            scripts.append(file_object)
-    return scripts
+            stdscr = None
 
-def get_scripts_from_directory(directory):
-    scripts = []
-    if os.path.exists(directory) and os.path.isdir(directory):
-        ls = os.listdir(directory)
-        for item in ls:
-            for script_type in Settings.script_types:
-                if not item.startswith(".") and not item.endswith(Settings.app) and item.endswith(script_type):
-                    scripts.append(os.path.join(directory, item))
-    return scripts
+        Settings.start = timeit.default_timer()
+        Settings.stop = Settings.start + Settings.duration
+        Settings.start_all = [Settings.start] * Settings.commands_count
+        Settings.key = Settings.start
 
-def load_default_folder():
-    scripts = []
-    print(Settings.cwd)
-    print("")
-    for path in Settings.scripts_path:
-        # walk through all possible paths, grab scripts from the first one that exists
-        path = os.path.join(path, Settings.scripts_folder)
-        d1 = os.path.abspath(os.path.join(Settings.cwd, path))
-        d2 = os.path.expanduser(path)
-        print(path)
-        print(d1)
-        print(d2)
-        print("")
-        if os.path.isdir(d1):
-            scripts = get_scripts_from_directory(d1)
-            break
-        elif os.path.isdir(d2):
-            scripts = get_scripts_from_directory(d2)
-            break
-    print(scripts)
-    return scripts
+        Procs.system_queue = multiprocessing.Queue(1)
+        frame_controller_seed = FrameControllers()
+        for x in range(Settings.commands_count):
+            # result, error = run_linux4(Settings.Settings.x])
+            # print(len(result))
+            # sys.exit()
 
-class Commands:
-    start_all = None
-    stop_all = None
-    commands = []
-    commands_count = len(commands)
-
-    def __init__(self, command, command_type):
-        self.command_orig = command
-        self.command = None
-        self.command_type = command_type
-
-        #run settings
-        self.interval = Defaults.interval
-        self.duration = Defaults.duration
-        self.imprecise = Defaults.imprecise
-        self.plain = Defaults.plain
-        self.instances = None
-
-        self.start = None
-        self.stop = None
-        #self.window_id = []
-        self.draw_window_id = 0
-
-        Commands.commands.append(self)
-
-    def test_print(self):
-        print(self.command_orig)
-        print(self.command)
-        print(self.command_type)
-        print("")
-        print(self.interval)
-        print(self.duration)
-        print(self.imprecise)
-        print(self.plain)
-        print(self.instances)
-        print("")
-        print(type(self.interval))
-        print(type(self.duration))
-        print(type(self.imprecise))
-        print(type(self.plain))
-        print(type(self.instances))
+            Settings.window_id.append(x)
+            Debug.debug("state_timeout")
+            Procs.event_queues.append("")
+            Procs.system_queues.append("")
+            Procs.process_frame_controllers.append("")
 
 
-    def set_settings(self,interval=None,duration=None,imprecise=None,plain=None,instances=None):
-        self.interval = interval if interval else self.interval
-        self.duration = duration if duration else self.duration
-        self.imprecise = imprecise if imprecise else self.imprecise
-        self.plain = plain if plain else self.plain
-        self.instances = instances
+            Procs.event_queues[x] = multiprocessing.Queue(1)
+            Procs.system_queues[x] = multiprocessing.Queue(1)
+            Procs.process_frame_controllers[x] = multiprocessing.Process(
+                target=frame_controller_seed.frame_controller,
+                args=(
+                    Settings.commands[x],
+                    Settings.intervals[x],
+                    Settings.start_all[x],
+                    Settings.precision[x],
+                    Settings.window_id[x],
+                    Settings.draw_window_id,
+                    Procs.event_queues[x],
+                    Procs.system_queues[x]
+                ))
 
-    def set_settings_from_script(self):
-        temp_settings = {"interval":None, "duration":None, "imprecise":None, "plain":None, "instances":None }
-        temp_set_type = {"interval":int , "duration":int , "imprecise":bool, "plain":bool, "instances":str}
+        for x in range(Settings.commands_count):
+            Procs.process_frame_controllers[x].start()
 
-        with open(self.command_orig) as file:
-            lines = file.read().splitlines()
+        if True:
+            Procs.process_event_controller = multiprocessing.Process(
+                target=event_controller,
+                args=(
+                    stdscr,
+                    Settings.draw_window_id,
+                    Procs.event_queues,
+                    Procs.system_queues
+                ))
+            Procs.process_event_controller.start()
+        Debug.debug("aaaaaa event start", 1)
 
-        #TO DO add error handling
-        for line in lines:
-            for key in temp_settings:
-                if line.startswith(key + "=") and temp_settings[key] is None:
-                    result, error = run_linux(line + " ; echo $" + key)
-                    temp_settings[key] = temp_set_type[key](result.rstrip("\n"))
+        time.sleep(Settings.stop - Settings.start)
 
-        self.set_settings(**temp_settings)
-
-    def validate_settings(self):
-        #TO DO
-        validate = True
-        return validate
-
-    def init_command(self):
-        #TO DO set subcommands, instances
-        pass
-
-    def init_script(self):
-        #TO DO set subcommands, instances
-        pass
-
-def curses_color_setup():
-    curses.init_pair(1, curses.COLOR_BLACK, curses.COLOR_YELLOW)
-    curses.init_pair(2, curses.COLOR_BLACK, curses.COLOR_RED)
-
-def start_curses():
-    stdscr = curses.initscr()
-    curses.noecho()
-    curses.cbreak()
-    curses.curs_set(0)
-    stdscr.keypad(True)
-    return stdscr
-
-class Procs:
-    event_queues = []
-    system_queues = []
-    process_frame_controllers = []
-    process_event_controller = []
-
-
-def initialize_key_press_process(self):
-    self.process_key_press = multiprocessing.Process(
-        target=self.key_press,
-        args=(
-            self.system_queue
-        ))
-
-def start_procs():
-
-    if Settings.curses:
-        stdscr = start_curses()
-        curses.start_color()
-        curses_color_setup()
-    else:
-        stdscr = None
-
-    Settings.start = timeit.default_timer()
-    Settings.stop = Settings.start + Settings.duration
-    Settings.start_all = [Settings.start] * Settings.commands_count
-    Settings.key = Settings.start
-
-    Procs.system_queue = multiprocessing.Queue(1)
-    frame_controller_seed = FrameControllers()
-    for x in range(Settings.commands_count):
-        # result, error = run_linux4(Settings.Settings.x])
-        # print(len(result))
-        # sys.exit()
-
-        Settings.window_id.append(x)
-        Debug.debug("state_timeout")
-        Procs.event_queues.append("")
-        Procs.system_queues.append("")
-        Procs.process_frame_controllers.append("")
-
-
-        Procs.event_queues[x] = multiprocessing.Queue(1)
-        Procs.system_queues[x] = multiprocessing.Queue(1)
-        Procs.process_frame_controllers[x] = multiprocessing.Process(
-            target=frame_controller_seed.frame_controller,
-            args=(
-                Settings.commands[x],
-                Settings.intervals[x],
-                Settings.start_all[x],
-                Settings.precision[x],
-                Settings.window_id[x],
-                Settings.draw_window_id,
-                Procs.event_queues[x],
-                Procs.system_queues[x]
-            ))
-
-    for x in range(Settings.commands_count):
-        Procs.process_frame_controllers[x].start()
-
-    if True:
-        Procs.process_event_controller = multiprocessing.Process(
-            target=event_controller,
-            args=(
-                stdscr,
-                Settings.draw_window_id,
-                Procs.event_queues,
-                Procs.system_queues
-            ))
-        Procs.process_event_controller.start()
-    Debug.debug("aaaaaa event start", 1)
-
-    time.sleep(Settings.stop - Settings.start)
 
 # ----------------------------------------------------------------------------------------------------------------------
-#       Master Controller / Event Manager
+#       Master Controller
 # ----------------------------------------------------------------------------------------------------------------------
 
 def event_controller(window, draw_window_id, event_queues, system_queues):
@@ -391,11 +313,186 @@ def event_controller(window, draw_window_id, event_queues, system_queues):
     except KeyboardInterrupt:
         pass
 
+
 # ----------------------------------------------------------------------------------------------------------------------
-#       Frames Subprocesses
+#       Objects
 # ----------------------------------------------------------------------------------------------------------------------
 
-class FrameControllers:
+
+class Windows:
+
+    def __init__(self, window_id, mode):
+        self.window_id = window_id
+        self.presentation_mode = mode
+        self.frame_queue = frame_queue
+        self.heatmap_queue = heatmap_queue
+        self.draw_event_queue = draw_event_queue
+        self.frame_event_queue = frame_event_queue
+
+
+
+    def draw_window2(window, frame_queue, heatmap_queue, draw_event_queue):
+        """ draw the most recent frame
+        """
+
+        try:
+            custom_height = 9999
+            custom_width = 9999
+
+            while True:
+                draw_event = draw_event_queue.get()
+                Debug.debug("d1")
+
+                if Settings.curses is False:
+                    # don't use curses
+                    Debug.debug("d2")
+                    frame = frame_queue.get()
+                    Debug.debug("d3")
+                    heatmap = heatmap_queue.get()
+                    #subprocess.Popen("clear").communicate()
+                    #print("\n".join(frame))
+                    #print("\n".join(heatmap))
+                    continue
+
+                frame = frame_queue.get()
+                heatmap = heatmap_queue.get()
+
+                window.clear()
+
+                terminal_height, terminal_width = window.getmaxyx()
+
+                draw_height = min(len(frame), terminal_height - 1, custom_height - 1)
+                width = min(terminal_width, custom_width)
+
+                #window.addstr(str(timeit.default_timer()))
+
+                for line in range(draw_height):
+                    #frame[line], heatmap[line], max_char = self.equalize_lengths(" ", frame[line], heatmap[line])
+                    #heatmap = heatmap.replace(" ", "0")
+
+                    draw_width = min(len(frame[line]), width)
+
+                    for column in range(draw_width):
+                        try:
+                            char = str(frame[line][column])
+                        except IndexError:
+                            char = "?"
+                        try:
+                            color_pair = curses.color_pair(Settings.cooldown_color_map[int("0" + heatmap[line][column])])
+                        except IndexError:
+                            color_pair = 0
+                        window.addstr(line, column, char, color_pair)
+                window.refresh()
+
+        except KeyboardInterrupt:
+            pass
+
+
+class Commands:
+    start_all = None
+    stop_all = None
+    commands = []
+    commands_count = len(commands)
+
+    def __init__(self, command, command_type):
+        self.command_orig = command
+        self.command = None
+        self.command_type = command_type
+
+        #run settings
+        self.run_settings = {}
+        self.interval = Defaults.interval
+        self.duration = Defaults.duration
+        self.imprecise = Defaults.imprecise
+        self.plain = Defaults.plain
+        self.instances = None
+
+        self.start = None
+        self.stop = None
+        #self.window_id = []
+        self.draw_window_id = 0
+
+        Commands.commands.append(self)
+
+    def test_print(self):
+        print(self.command_orig)
+        print(self.command)
+        print(self.command_type)
+        print("")
+        print(self.interval)
+        print(self.duration)
+        print(self.imprecise)
+        print(self.plain)
+        print(self.instances)
+        print("")
+        print(type(self.interval))
+        print(type(self.duration))
+        print(type(self.imprecise))
+        print(type(self.plain))
+        print(type(self.instances))
+
+    def set_all_settings(self,instances=None,interval=None,duration=None,imprecise=None,plain=None):
+        self.instances = self.set_instances(instances)
+        self.interval = self.set_interval(interval) if interval else self.interval
+        self.duration = self.set_duration(duration) if duration else self.duration
+        self.imprecise = self.set_imprecise(imprecise) if imprecise else self.imprecise
+        self.plain = self.set_plain(plain) if plain else self.plain
+
+    def set_all_settings_from_script(self):
+        temp_settings = {"instances":None,"interval":None, "duration":None, "imprecise":None, "plain":None}
+
+        with open(self.command_orig) as file:
+            lines = file.read().splitlines()
+
+        for line in lines:
+            for key in temp_settings:
+                if line.startswith(key + "=") and temp_settings[key] is None:
+                    result, error = run_linux(line + " ; echo $" + key)
+                    #TO DO evaluate error
+                    temp_settings[key] = result.rstrip("\n")
+
+        self.set_all_settings(**temp_settings)
+
+    def set_instances(self, instances):
+        min_instances, max_instances = 0, 21
+        instances = str(instances).split(" ")
+        if len(instances) < min_instances or len(instances) >= max_instances:
+            #TO DO change this to a custom error
+            raise ValueError
+        return instances
+
+    def set_interval(self, interval):
+        lower_range, upper_range = 0, float("inf")
+        interval = float(interval)
+        if interval < lower_range or interval >= upper_range:
+            raise ValueError
+        return interval
+
+    def set_duration(self, duration):
+        lower_range, upper_range = 1, float("inf")
+        duration = int(duration)
+        if duration < lower_range or duration >= upper_range:
+            raise ValueError
+        return duration
+
+    def set_imprecise(self, imprecise):
+        imprecise = bool(imprecise)
+        return imprecise
+
+    def set_plain(self, plain):
+        plain = bool(plain)
+        return plain
+
+    def init_command(self):
+        #TO DO set subcommands, instances
+        pass
+
+    def init_script(self):
+        #TO DO set subcommands, instances
+        pass
+
+
+class Frames:
     """This is the main controlling class.
 
     Frames are merely the collection of the stdout (or stderr) of the target command or script. If the target command
@@ -702,8 +799,8 @@ class FrameControllers:
         except KeyboardInterrupt:
             pass
 
-class FrameGenerators:
 
+class FrameGenerators:
 
     def __init__(self):
         self.creation_time = None
@@ -968,74 +1065,6 @@ class FrameGenerators:
         values = [value + (adder * (max_length - length)) for length, value in zip(lengths, args)]
         values.append(max_length)
         return values
-
-class Windows:
-
-    def __init__(self, window_id, mode):
-        self.window_id = window_id
-        self.presentation_mode = mode
-        self.frame_queue = frame_queue
-        self.heatmap_queue = heatmap_queue
-        self.draw_event_queue = draw_event_queue
-        self.frame_event_queue = frame_event_queue
-
-
-
-    def draw_window2(window, frame_queue, heatmap_queue, draw_event_queue):
-        """ draw the most recent frame
-        """
-
-        try:
-            custom_height = 9999
-            custom_width = 9999
-
-            while True:
-                draw_event = draw_event_queue.get()
-                Debug.debug("d1")
-
-                if Settings.curses is False:
-                    # don't use curses
-                    Debug.debug("d2")
-                    frame = frame_queue.get()
-                    Debug.debug("d3")
-                    heatmap = heatmap_queue.get()
-                    #subprocess.Popen("clear").communicate()
-                    #print("\n".join(frame))
-                    #print("\n".join(heatmap))
-                    continue
-
-                frame = frame_queue.get()
-                heatmap = heatmap_queue.get()
-
-                window.clear()
-
-                terminal_height, terminal_width = window.getmaxyx()
-
-                draw_height = min(len(frame), terminal_height - 1, custom_height - 1)
-                width = min(terminal_width, custom_width)
-
-                #window.addstr(str(timeit.default_timer()))
-
-                for line in range(draw_height):
-                    #frame[line], heatmap[line], max_char = self.equalize_lengths(" ", frame[line], heatmap[line])
-                    #heatmap = heatmap.replace(" ", "0")
-
-                    draw_width = min(len(frame[line]), width)
-
-                    for column in range(draw_width):
-                        try:
-                            char = str(frame[line][column])
-                        except IndexError:
-                            char = "?"
-                        try:
-                            color_pair = curses.color_pair(Settings.cooldown_color_map[int("0" + heatmap[line][column])])
-                        except IndexError:
-                            color_pair = 0
-                        window.addstr(line, column, char, color_pair)
-                window.refresh()
-
-        except KeyboardInterrupt:
-            pass
 
 # ----------------------------------------------------------------------------------------------------------------------
 #       Terminate
