@@ -13,35 +13,20 @@ import timeit
 import argparse
 import copy
 
-""" order of things:
-    load settings, defaults, debug as class variables (Settings, Defaults, Degub)
-    load single instance of Bwatch to start everything
-    Bwatch __init__:
-        load args via argparse (func)
-        start curses (self.start_curses())
-        setup color for curses (self.curses_color_setup())
+# ----------------------------------------------------------------------------------------------------------------------
+#       working on:
+#       done:
+#       working:
+#       note: there are now two draw functions
+# ----------------------------------------------------------------------------------------------------------------------
 
-        setup the number of windows (similar to screen regions)
-            store into class Windows
-                self.load_windows_from_defaults()
-                self.load_windows_from_flags()
-
-        load the command values from three places (don't run them yet):
-            store into class Commands
-                self.load_commands_from_flags()
-                self.load_commands_from_script_flag()
-                self.load_commands_from_default_folder()
-                
-        start class Controller
-        
-    Controller __init__:
-    
-"""
-
-# -- Settings ----------------------------------------------------------------------------------------------------------
+# ----------------------------------------------------------------------------------------------------------------------
+#       Settings
+# ----------------------------------------------------------------------------------------------------------------------
 
 class Settings:
-    use_curses = True
+    curses = False
+    curses = True
     cooldown_ticks = 4
     cooldown_color_map = [0, 1] + ([2] * (cooldown_ticks + 1))
 
@@ -51,7 +36,7 @@ class Settings:
     cwd = os.getcwd()
     app = os.path.basename(__file__)
 
-    max_windows = 1
+    max_windows = 6
     max_instances = 20
     max_commands = 16
 
@@ -63,6 +48,7 @@ class Defaults:
 
 class Debug:
     debug_level = 0
+    debug_mode = True
     debug_mode = False
 
     @classmethod
@@ -70,124 +56,104 @@ class Debug:
         if Debug.debug_mode is True and Settings.curses is False and Debug.debug_level >= level:
             print(item)
 
+# ----------------------------------------------------------------------------------------------------------------------
+#       Initialize
+# ----------------------------------------------------------------------------------------------------------------------
 
-
-
-
-
-# -- Args --------------------------------------------------------------------------------------------------------------
+# if True:
+#     commands = [
+#         'date +%N; dmesg',
+#         'date +%N',
+#         'python -c "import timeit; print(str(timeit.default_timer()))"',
+#         'echo "abcgxz abc \n123456\n7890 !@#$&^"',
+#         'date +%N',
+#         'date; sleep 22; sleep 11; date',
+#         'date',
+#         'date',
+#         './test.sh',
+#         'dmesg' ]
 
 def process_argparse():
     parser = argparse.ArgumentParser()
-    parser.add_argument("commands",
-                        nargs="*",
+    parser.add_argument("commands", nargs="*",
                         help="[optional] command(s) to be run including flags. use -i for multiple instances. " +
-                             "use -s for bwatch scripts and folders instead")
-    parser.add_argument("-n",
-                        "--interval",
-                        dest="interval",
-                        type=int,
+                             "use -s for bwatch scripts instead")
+    parser.add_argument("-n", "--interval", dest="interval", type=int,
                         metavar="<sec>",
                         help="interval in seconds, no min, default = 1")
-    parser.add_argument("-d",
-                        "--duration",
-                        dest="duration",
-                        type=int,
+    parser.add_argument("-d", "--duration", dest="duration", type=int,
                         metavar="<sec>",
                         help="quit after <sec> seconds")
-    parser.add_argument("-x",
-                        "--not-precise", dest="imprecise",
-                        action="store_true",
-                        help="-n <seconds> inserted between frames, no dropped frames. without this flag, precise is " +
-                             "used and each frame is exactly -n <seconds> apart and frames will be dropped if not fast enough")
-    parser.add_argument("-p",
-                        "--plain",
-                        dest="plain",
-                        action="store_true",
+    parser.add_argument("-x", "--not-precise", dest="imprecise", action="store_true",
+                        help="-i seconds inserted between frames, no dropped frames. without this flag, precise is " +
+                             "used and each frame is exactly -i seconds apart, frame is dropped if not fast enough")
+    parser.add_argument("-p", "--plain", dest="plain", action="store_true",
                         help="do not highlight any changes")
-    parser.add_argument("-i",
-                        "--instances",
-                        dest="instances",
-                        nargs="*",
+    parser.add_argument("-i", "--instances", dest="instances", nargs="*",
                         metavar="<$1>",
-                        help="run a seperate instance of command or script, replace $1 with <$1> arguments, one " +
+                        help="run a seperate instance of command or script, and replace $1 with <$1> arguments, one " +
                              "argument per instance. see readme for details")
-
-    parser.add_argument("-s",
-                        "--script",
-                        dest="script",
-                        metavar="<file|dir>",
-                        help="load bwatch script or a folder containing one or more bwatch scripts")
-
-#    parser.add_argument("-a",
-#                        "--default-scripts",
-#                        dest="default_scripts",
-#                        action="store_true",
-#                        help="also run scripts from the default folder, ./watch.d or ../watch.d or ~/watch.d")
-
+    parser.add_argument("-s", "--scripts", dest="scripts", nargs="*",
+                        metavar="<scr>",
+                        help="bwatch script(s) to be run, in addition to any commands")
+    parser.add_argument("-a", "--default-scripts", dest="default_scripts", action="store_true",
+                        help="also run scripts from the default folder, ./watch.d or ../watch.d or ~/watch.d")
+    parser.add_argument("-o", "--override", dest="override", action="store_true",
+                        help="bwatch scripts read settings flags from inside the script itself, use command " +
+                             "line flags instead if a flag is specified")
     args = parser.parse_args()
     return args
 
-# -- Init Bwatch -------------------------------------------------------------------------------------------------------
-
 class Bwatch:
 
-    def __init__(self):
+    def initbwatch(self):
         self.args = process_argparse()
 
-        self.curses_stdscr = None
-        self.start_curses()
-        self.curses_color_setup()
-
-        self.load_windows_from_defaults()
-        self.load_windows_from_flags()
-
+        self.settings_from_flags = {"instances" : self.args.instances,
+                                   "interval" : self.args.interval,
+                                   "duration" : self.args.duration,
+                                   "imprecise" : self.args.imprecise,
+                                   "plain" : self.args.plain,
+                                   }
         self.load_commands_from_flags()
         self.load_commands_from_script_flag()
-
-        # not using default folder for now
-        # self.load_commands_from_default_folder()
+        self.load_commands_from_default_folder()
 
         if len(Commands.commands) == 0:
             #TO DO improve
             print("no commands or scripts found")
 
+        #start_procs()
+
     def load_commands_from_flags(self):
-        # load commands and settings from command line into Commands class instance
-        self.settings_from_flags = {"instances" : self.args.instances,
-                                    "interval" : self.args.interval,
-                                    "duration" : self.args.duration,
-                                    "imprecise" : self.args.imprecise,
-                                    "plain" : self.args.plain,
-                                    }
+        # load commands and settings from command line into Commands class instance(s)
         if self.args.commands:
             for item in self.args.commands:
                 c = Commands(command = item, command_type="command")
                 try:
                     c.set_all_settings(**self.settings_from_flags)
                 except (TypeError, ValueError, OverflowError):
-                    # TO DO handle error better
+                    # TO DO handel error
                     print("1 type error")
                 c.init_command()
 
     def load_commands_from_script_flag(self):
-        # load commands and settings from a bwatch script into Commands class instance
-        # if single script, just use the script, if directory, use any eligible script in the directory
-        if self.args.script:
-            for item in self.args.script:
-                scripts = self.process_folder_script_path(item)
+        # load commands and settings from a bwatch script via command line script flag into Commands class instance(s)
+        if self.args.scripts:
+            for item in self.args.scripts:
+                scripts = process_folder_script_path(item)
                 for script in scripts:
                     try:
                         c = Commands(command = script, command_type="script")
                         c.set_all_settings_from_script()
-                        # if command line settings exist, use them instead
-                        c.set_all_settings(**self.settings_from_flags)
+                        if self.args.override:
+                        # override flag to use settings from command line flags instead of from the script itself
+                                c.set_all_settings(**self.settings_from_flags)
                     except (TypeError, ValueError, OverflowError):
                         # TO DO file handling error
                         print("2 type error")
 
     def load_commands_from_default_folder(self):
-        # not using this function for now
         # load commands and settings from the default bwatch folder into Commands class instance(s)
         if (not self.args.commands and not self.args.scripts) or self.args.default_scripts:
             scripts = self.load_default_folder()
@@ -196,8 +162,9 @@ class Bwatch:
                     try:
                         c = Commands(command = script, command_type="script")
                         c.set_all_settings_from_script()
-                        # if command line settings exist, use them instead
-                        c.set_all_settings(**self.settings_from_flags)
+                        if self.args.override:
+                        # override flag to use settings from command line flags instead of from the script itself
+                                c.set_all_settings(**self.settings_from_flags)
                     except (TypeError, ValueError, OverflowError):
                         # TO DO file handling error
                         print("3 type error")
@@ -237,41 +204,32 @@ class Bwatch:
                 break
         return scripts
 
-    def start_curses(self):
-        self.curses_stdscr = curses.initscr()
-        curses.noecho()
-        curses.cbreak()
-        curses.curs_set(0)
-        self.curses_stdscr.keypad(True)
-
     def curses_color_setup(self):
-        curses.start_color()
         curses.init_pair(1, curses.COLOR_BLACK, curses.COLOR_YELLOW)
         curses.init_pair(2, curses.COLOR_BLACK, curses.COLOR_RED)
 
-    def load_windows_from_defaults(self):
-        for x in range(Settings.max_windows):
-            Windows()
+    def start_curses(self):
+        stdscr = curses.initscr()
+        curses.noecho()
+        curses.cbreak()
+        curses.curs_set(0)
+        stdscr.keypad(True)
+        return stdscr
 
-    def load_windows_from_flags(self):
-        pass
-
-# -- Master Controller -------------------------------------------------------------------------------------------------
+# ----------------------------------------------------------------------------------------------------------------------
+#       Master Controller
+# ----------------------------------------------------------------------------------------------------------------------
 
 class Controller:
 
     def __init__(self):
-        self.draw_event_queues = []
-        self.draw_transfer_queues = []
+        self.event_queues = []
+        self.draw_queues = []
+        self.frame_queues = []
 
-        self.frame_event_queues = []
-        self.frame_transfer_queues = []
-        self.heatmap_transfer_queues = []
-
-        self.processes_frame_controller = []
+        self.processes_frame = []
         self.processes_frame_generator = []
         self.processes_draw = []
-        self.processes_draw_controller = []
 
         self.commands = []
 
@@ -300,26 +258,20 @@ class Controller:
                 Procs.event_queues[x],
             ))
 
-        for x in range(Settings.commands_count):
-            Procs.process_frame_controllers[x].start()
-
+for x in range(Settings.commands_count):
+    Procs.process_frame_controllers[x].start()
 
 class Procs:
 
     def __init__(self):
+        event_queues = []
+        process_frame_controllers = []
+        process_event_controller = []
 
-        self.draw_event_queues = []
-        self.draw_frame_queues = []
-        self.draw_heatmap_queues = []
 
-        self.frame_event_queues = []
-        self.frame_queues = []
-        self.heatmap_queues = []
-
-        self.processes_frame_controller = []
-        self.processes_frame_generator = []
-        self.processes_draw = []
-        self.processes_draw_controller = []
+        draw_frame_procs = []
+        frame_procs = []
+        frame_generator_procs = []
 
     def start_key_press_process(self):
         self.process_key_press = multiprocessing.Process(
@@ -327,39 +279,31 @@ class Procs:
             args=(
             ))
 
-    def initial_start_draw_procs(self):
-        for window in Windows.windows:
-            self.start_draw_frame_proc(window.window)
+    def start_draw_frame_proc(self):
+        pass
 
-    def start_draw_frame_proc(self, window):
-        self.draw_frame_queue.append(multiprocessing.Queue(1))
-        self.draw_heatmap_queue.append(multiprocessing.Queue(1))
-        self.draw_event_queue.append(multiprocessing.Queue(1))
+    def start_frame_proc(self):
 
-        self.draw_window_procs = multiprocessing.Process(
-            target=window.draw_window,
-            args=(
-                window,
-                self.draw_event_queue[-1],
-                self.draw_frame_queue[-1],
-                self.draw_heatmap_queue[-1]
-            ))
+        if Settings.curses:
+            stdscr = start_curses()
+            curses.start_color()
+            curses_color_setup()
+        else:
+            stdscr = None
 
-    def initial_start_frame_and_frame_generator_procs(self):
         Settings.start = timeit.default_timer()
         Settings.stop = Settings.start + Settings.duration
         Settings.start_all = [Settings.start] * Settings.commands_count
         Settings.key = Settings.start
 
         frame_controller_seed = FrameControllers()
+        for x in range(Settings.commands_count):
+            # result, error = run_linux4(Settings.Settings.x])
+            # print(len(result))
+            # sys.exit()
 
-        for command in Commands.commands:
-            self.start_fra
-
-
-    def start_frame_and_frame_generator_proc(self):
-
-
+            Settings.window_id.append(x)
+            Debug.debug("state_timeout")
             Procs.event_queues.append("")
             Procs.process_frame_controllers.append("")
 
@@ -394,22 +338,7 @@ class Procs:
         time.sleep(Settings.stop - Settings.start)
 
     def start_frame_generator_proc(self):
-        self.generator_frame_queue = multiprocessing.Queue(1)
-        self.generator_heatmap_queue = multiprocessing.Queue(1)
-        self.generator_event_queue = multiprocessing.Queue(1)
-
-        self.process_generator = multiprocessing.Process(
-            target=self.generator_seed.generator_controller,
-            args=(
-                self.command,
-                self.interval,
-                self.start,
-                self.precision,
-                self.generator_frame_queue,
-                self.generator_heatmap_queue,
-                self.generator_event_queue,
-                self.event_queue
-            ))
+        pass
 
 
 def event_controller(window, draw_window_id, event_queues):
@@ -441,89 +370,27 @@ def event_controller(window, draw_window_id, event_queues):
         pass
 
 
-# -- Objects -----------------------------------------------------------------------------------------------------------
+# ----------------------------------------------------------------------------------------------------------------------
+#       Objects
+# ----------------------------------------------------------------------------------------------------------------------
 
 class Events:
     pass
 
 
 class Windows:
-    windows = []
 
-    def __init__(self,height=0,width=0,v_position=0,h_position=0,x_position=0,y_position=0):
-        self.curses_window = None
-        self.heigth = height
-        self.width = width
-        self.v_position = v_position
-        self.h_position = h_position
-        self.x_position = x_position
-        self.y_position = y_position
-        self.window_id = len(Windows.windows)
-        Windows.windows.append(self)
+    def __init__(self, window_id, mode):
+        self.window_id = window_id
+        self.presentation_mode = mode
+        self.frame_queue = frame_queue
+        self.heatmap_queue = heatmap_queue
+        self.draw_event_queue = draw_event_queue
+        self.frame_event_queue = frame_event_queue
 
-        # create a new curses window
-        if Settings.curses is True:
-            self.curses_window = curses.newwin(self.heigth, self.width, self.v_position, self.h_position)
-            self.curses_window.nodelay(0)
-            self.curses_window.keypad(True)
 
-    def draw_window(self, window, draw_event_queue, frame_queue, heatmap_queue):
-        """ draw the most recent frame
-        """
 
-        try:
-            custom_height = 9999
-            custom_width = 9999
-
-            while True:
-                draw_event = draw_event_queue.get()
-                Debug.debug("d1")
-
-                if Settings.curses is False:
-                    # don't use curses
-                    Debug.debug("d2")
-                    frame = frame_queue.get()
-                    Debug.debug("d3")
-                    heatmap = heatmap_queue.get()
-                    #subprocess.Popen("clear").communicate()
-                    #print("\n".join(frame))
-                    #print("\n".join(heatmap))
-                    continue
-
-                frame = frame_queue.get()
-                heatmap = heatmap_queue.get()
-
-                window.clear()
-
-                terminal_height, terminal_width = window.getmaxyx()
-
-                draw_height = min(len(frame), terminal_height - 1, custom_height - 1)
-                width = min(terminal_width, custom_width)
-
-                #window.addstr(str(timeit.default_timer()))
-
-                for line in range(draw_height):
-                    #frame[line], heatmap[line], max_char = self.equalize_lengths(" ", frame[line], heatmap[line])
-                    #heatmap = heatmap.replace(" ", "0")
-
-                    draw_width = min(len(frame[line]), width)
-
-                    for column in range(draw_width):
-                        try:
-                            char = str(frame[line][column])
-                        except IndexError:
-                            char = "?"
-                        try:
-                            color_pair = curses.color_pair(Settings.cooldown_color_map[int("0" + heatmap[line][column])])
-                        except IndexError:
-                            color_pair = 0
-                        window.addstr(line, column, char, color_pair)
-                window.refresh()
-
-        except KeyboardInterrupt:
-            pass
-
-    def draw_window2(self, window, frame_queue, heatmap_queue, draw_event_queue):
+    def draw_window2(window, frame_queue, heatmap_queue, draw_event_queue):
         """ draw the most recent frame
         """
 
@@ -610,6 +477,8 @@ class Commands:
         self.heatmap_queue = None
         self.all_window_event_queues = None
 
+
+
         Commands.commands.append(self)
 
     def test_print(self):
@@ -693,17 +562,36 @@ class Commands:
 class Frames:
     """This is the main controlling class.
 
-    Frames are the text output from a command or script, run every interval.
-    Heatmaps are the highlighting that occurs when a character changes from one frame to the next.
+    Frames are the collection of the stdout (or stderr) of the target command or script. If the target command
+    or script is run every second for 10 seconds, 10 frames (outputs) will be generated and stored.  Heatmaps are
+    numerical representation for the change state of each character in a frame, it's the highlighting that occurs when
+    a character changes from one frame to the next.  See the FrameGenerators class for more details.
 
-    This class is utilized only inside a multiprocess subprocess, one subprocess for each target command or script.
-    This subprocess receives a frame and heatmap from the FrameGenerator subprocess, stores them, and if needed sends
-    the frame and heatmap to the draw subprosses. In playback mode, this subprocess will receive a request for a
-    specific old frame and heatmap from the draw subprosess.
+    This class is utilized inside a multiprocess subprocess, one subprocess for each target command or script.  Think
+    of this as the brains for each of the watch's target commands - it controls the input, storage, and output for
+    each target command or script.
+
+    Class data can only be accessed from within the subprocess, multiprocess queues are utilized to share data between
+    processes.
+
+    Methods and fields in this class do the following:
+        Starts child subprocesses, including:
+            generator controller - as a method of an isolated FrameGenerators class instance
+            draw window - as a function
+        Receives frame and heatmap data from the generator subprocess via a queue
+        Stores all frame and heatmap data
+        Pushes the frame and heatmap data to the draw window via a queue
     """
+    #delete instances = []
 
     def __init__(self):
-        # storage fields
+        """ As this class will be isolated in a multiprocess process, most fields are initialized in the
+        self.controller() function, only the storage fields are defined here"""
+        # class fields
+        #delete FrameControllers.instances.append(self)
+        #delete self.command_id = len(FrameControllers.instances) - 1
+
+        # frame storage fields
         self.frame = []
         self.frame_pointer = []
         self.frame_state = []
@@ -714,12 +602,94 @@ class Frames:
         self.heatmap_state = []
         self.current = 0
 
-    def frame_controller(self, start, window_id, event_queue, draw_event_queues, draw_frame_queues, draw_heatmap_queues):
-        """ This method will simply wait for a the FrameGenerator subprocess to put a new frame and heatmap
-        into the appropriate queues, which are then sent on to the draw window and file write child
-        subprocesses.
+    def initialize_generator_childprocess(self):
+        self.generator_seed = FrameGenerators()
+        self.generator_frame_queue = multiprocessing.Queue(1)
+        self.generator_heatmap_queue = multiprocessing.Queue(1)
+        self.generator_event_queue = multiprocessing.Queue(1)
+        self.process_generator = multiprocessing.Process(
+            target=self.generator_seed.generator_controller,
+            args=(
+                self.command,
+                self.interval,
+                self.start,
+                self.precision,
+                self.generator_frame_queue,
+                self.generator_heatmap_queue,
+                self.generator_event_queue,
+                self.event_queue
+            ))
+
+    def initialize_draw_window_childprocess(self):
+        # window fields
+        self.window = None
+        self.key_press = None
+        self.heigth = 0
+        self.width = 0
+        self.v_position = 0
+        self.h_position = 0
+        self.x_position = 0
+        self.y_position = 0
+
+        # create a new curses window
+        self.window = None
+        if Settings.curses is True:
+            self.window = curses.newwin(self.heigth, self.width, self.v_position, self.h_position)
+            self.window.nodelay(0)
+            self.window.keypad(True)
+        self.draw_frame_queue = multiprocessing.Queue(1)
+        self.draw_heatmap_queue = multiprocessing.Queue(1)
+        self.draw_event_queue = multiprocessing.Queue(1)
+        self.process_draw_window = multiprocessing.Process(
+            target=self.draw_window,
+            args=(
+                self.window,
+                self.draw_frame_queue,
+                self.draw_heatmap_queue,
+                self.draw_event_queue
+            ))
+
+    def initialize_all_childprocesses(self):
+        self.initialize_generator_childprocess()
+        self.initialize_draw_window_childprocess()
+
+    def start_all_childprocesses(self):
+        self.process_generator.start()
+        self.process_draw_window.start()
+
+    def terminate_childprocesses(self):
+        """ all child subprocoesses are killed with os - signal 2, not a flag or terminate.  This leads to a clean
+        stop with no error messages in the case of a user control-c. User control-c are propagated to all
+        subprocesses automatically on an OS level and are not controllable. """
+        # wait a tad to let the child processes stop on their own in the case of user control-c.
+        time.sleep(.05)
+        term_sig = 2
+        if self.process_generator.exitcode is None:
+            os.kill(self.process_generator.pid, term_sig)
+        if self.process_draw_window.exitcode is None:
+            os.kill(self.process_draw_window.pid, term_sig)
+        # just in case this doesn't work because of timing or otherwise, wait a bit and kill with process.terminate
+        time.sleep(.1)
+        self.process_generator.terminate()
+        self.process_draw_window.terminate()
+
+    def frame_controller(self, command, interval, start, precision, window_id, draw_window_id, event_queue):
+        """ This is the main method that will control the input, output, and storage of the frame and heatmap data.
+        After initializing the fields, this method will simply wait for a the generator child subprocess to put a new
+        frame and heatmap into the appropriate queues, which are then sent on to the draw window and file write child
+        subprocesses. Note, all interval timing is done in the generator child subprocess.
+            generator child --["generator"]--> event queue (let's us know a new frame is available)
+            generator child --[state]-->   |state_queue  | --> controller --> self.state
+            generator child --[frame]-->   |frame_queue  | --> controller --> self.frame
+            generator child --[heatmap]--> |heatmap_queue| --> controller --> self.heatmap
+                ...
+            controller --[frame]-->   |draw_frame_queue  | --> draw_window child
+            controller --[heatmap]--> |draw_heatmap_queue| --> draw_window child
         """
+        self.command = command
+        self.interval = interval
         self.start = start
+        self.precision = precision
         self.window_id = window_id
         self.draw_window_id = draw_window_id
         self.event_queue = event_queue
@@ -728,10 +698,16 @@ class Frames:
         self.presentation_mode = "live"
         self.current = 0
 
+        # start sub-processes
+        self.process_generator = None
+        self.process_draw_window = None
+        self.initialize_all_childprocesses()
+        self.start_all_childprocesses()
+
         self.event_choices = {
             "new frame" : self.process_new_frame,
             "window change" : self.window_change,
-            }
+        }
         try:
             while True:
                 # this controller queue get is blocking, so just wait for the a new frame or a message from key_press
@@ -739,6 +715,7 @@ class Frames:
                 self.event_choices.get(self.event[0], "")()
         except KeyboardInterrupt:
             # the controller method runs as a separate process and is killed either by a ctrl-c or a term_sig 2
+            # poison pill / process.terminate is not used
             self.terminate_childprocesses()
 
     def process_new_frame(self):
@@ -829,6 +806,62 @@ class Frames:
             self.draw_frame_queue.put(self.frame[self.frame_pointer[-1]])
             self.draw_heatmap_queue.put(self.heatmap[self.heatmap_pointer[-1]])
         if self.presentation_mode == "playback":
+            pass
+
+    def draw_window(self, window, frame_queue, heatmap_queue, draw_event_queue):
+        """ draw the most recent frame
+        """
+
+        try:
+            custom_height = 9999
+            custom_width = 9999
+
+            while True:
+                draw_event = draw_event_queue.get()
+                Debug.debug("d1")
+
+                if Settings.curses is False:
+                    # don't use curses
+                    Debug.debug("d2")
+                    frame = frame_queue.get()
+                    Debug.debug("d3")
+                    heatmap = heatmap_queue.get()
+                    #subprocess.Popen("clear").communicate()
+                    #print("\n".join(frame))
+                    #print("\n".join(heatmap))
+                    continue
+
+                frame = frame_queue.get()
+                heatmap = heatmap_queue.get()
+
+                window.clear()
+
+                terminal_height, terminal_width = window.getmaxyx()
+
+                draw_height = min(len(frame), terminal_height - 1, custom_height - 1)
+                width = min(terminal_width, custom_width)
+
+                #window.addstr(str(timeit.default_timer()))
+
+                for line in range(draw_height):
+                    #frame[line], heatmap[line], max_char = self.equalize_lengths(" ", frame[line], heatmap[line])
+                    #heatmap = heatmap.replace(" ", "0")
+
+                    draw_width = min(len(frame[line]), width)
+
+                    for column in range(draw_width):
+                        try:
+                            char = str(frame[line][column])
+                        except IndexError:
+                            char = "?"
+                        try:
+                            color_pair = curses.color_pair(Settings.cooldown_color_map[int("0" + heatmap[line][column])])
+                        except IndexError:
+                            color_pair = 0
+                        window.addstr(line, column, char, color_pair)
+                window.refresh()
+
+        except KeyboardInterrupt:
             pass
 
 
@@ -1098,23 +1131,18 @@ class FrameGenerators:
         values.append(max_length)
         return values
 
-# -- Terminate ---------------------------------------------------------------------------------------------------------
+# ----------------------------------------------------------------------------------------------------------------------
+#       Terminate
+# ----------------------------------------------------------------------------------------------------------------------
 
 
 def terminate_processes():
-    """ all child subprocoesses are killed with os - signal 2, not a flag or terminate.  This leads to a clean
-    stop with no error messages in the case of a user control-c. User control-c are propagated to all
-    subprocesses automatically on an OS level and are not controllable. """
-
-    # wait a tad to let the child processes stop on their own in the case of user control-c.
     time.sleep(.15)
     procs = Procs.process_frame_controllers + [Procs.process_event_controller]
     for proc in procs:
         if proc.exitcode is None:
             term_sig = 2
             os.kill(proc.pid, term_sig)
-
-    # just in case this doesn't work because of timing or otherwise, wait a bit and kill with process.terminate
     time.sleep(.2)
     for proc in procs:
         proc.terminate()
@@ -1126,7 +1154,9 @@ def terminate_curses():
     curses.endwin()
 
 
-# -- General Function -------------------------------------------------------------------------------------------------
+# ----------------------------------------------------------------------------------------------------------------------
+#       General Functions
+# ----------------------------------------------------------------------------------------------------------------------
 
 def run_linux(command):
     result, error = subprocess.Popen(
@@ -1145,7 +1175,9 @@ def run_linux(command):
         error = str(error)
     return result, error
 
-# -- Start -------------------------------------------------------------------------------------------------------------
+# ----------------------------------------------------------------------------------------------------------------------
+#       Start
+# ----------------------------------------------------------------------------------------------------------------------
 
 if __name__ == "__main__":
 
@@ -1154,6 +1186,7 @@ if __name__ == "__main__":
     try:
         terminate = False #TEMP take out
         bwatch = Bwatch()
+        bwatch.initbwatch()
     except KeyboardInterrupt:
         print("")
         terminate = False

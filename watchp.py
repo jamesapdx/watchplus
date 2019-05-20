@@ -1,5 +1,8 @@
 #!/usr/bin/python3
 # -*- encoding: utf8 -*-
+# pylint: disable=line-too-long
+# pylint: disable=missing-docstring
+# pylint: disable=too-many-instance-attributes
 
 import sys
 import os
@@ -47,7 +50,7 @@ class Windows():
 
     def cooldown_color_setup(self, cooldown_ticks=4):
         self.cooldown_ticks = cooldown_ticks
-        self.cooldown_color_map = [0,1] + ([2] * (cooldown_ticks + 1))
+        self.cooldown_color_map = [0, 1] + ([2] * (cooldown_ticks + 1))
 
     def test_case(self, test_number):
         # alternate test cases:
@@ -65,7 +68,8 @@ class Windows():
         elif test_case == 5:
             result, error = run_linux("./test.sh")
         else:
-            result, error = run_linux("dmesg")
+            result, error = run_linux("date")
+            #result, error = run_linux("dmesg")
         return result
 
     def frame_generator(self, test_number, test_case=None):
@@ -111,8 +115,8 @@ class Windows():
         self.heatmap_state.append(0)
         self.heatmap_ignore.append(0)
 
-        frame = ['','']
-        heatmap = ['','']
+        frame = ['', '']
+        heatmap = ['', '']
 
         frame[0] = self.frame[self.frame_pointer[new_pointer]]
         frame[-1] = self.frame[self.frame_pointer[new_pointer - 1]]
@@ -136,7 +140,7 @@ class Windows():
             self.heatmap_pointer.append(new_pointer)
 
             frame[0], frame[-1], heatmap[-1], max_lines = self.equalize_lengths(
-                            [""], frame[0], frame[-1], heatmap[-1])
+                [""], frame[0], frame[-1], heatmap[-1])
 
             # start line by line comparison
             for line in range(max_lines):
@@ -145,7 +149,7 @@ class Windows():
                 if frame[0][line] != frame[-1][line]:
                     # get max length of this fame line, last frame line, last heatmap_line
                     frame[0][line], frame[-1][line], heatmap[-1][line], max_char = self.equalize_lengths(
-                                " ", frame[0][line], frame[-1][line], heatmap[-1][line])
+                        " ", frame[0][line], frame[-1][line], heatmap[-1][line])
                     #heatmap[-1][line] = heatmap[-1][line].replace(" ","0")
 
                     # perform a char by char comparison to the last frame and mark hot if different
@@ -162,7 +166,7 @@ class Windows():
                 if int(max(heatmap[0][line])) > 1:
                     self.heatmap_state[new_pointer] = 1
                     for cooldown in range(2, self.cooldown_ticks + 3, 1):
-                        heatmap[0][line] = heatmap[0][line].replace(str(cooldown),str(cooldown - 1))
+                        heatmap[0][line] = heatmap[0][line].replace(str(cooldown), str(cooldown - 1))
 
                 # save the new heatmap for this frame to the main heatmap list
                 self.heatmap[new_pointer].append(heatmap[0][line])
@@ -170,7 +174,7 @@ class Windows():
     def equalize_lengths(self, adder, *args):
         lengths = [len(value) for value in args]
         max_length = max(lengths)
-        values = [value + (adder * (max_length - length)) for length, value in zip(lengths, args) ]
+        values = [value + (adder * (max_length - length)) for length, value in zip(lengths, args)]
         values.append(max_length)
         return values
 
@@ -189,17 +193,17 @@ class Windows():
 
         for line in range(draw_height):
             frame[line], heatmap[line], max_char = self.equalize_lengths(" ", frame[line], heatmap[line])
-            heatmap[line] = heatmap[line].replace(" ","0")
+            heatmap[line] = heatmap[line].replace(" ", "0")
 
             draw_width = min(max_char, width)
 
             for column in range(draw_width):
                 self.window.addstr(
-                        line,
-                        column,
-                        str(frame[line][column]),
-                        curses.color_pair(self.cooldown_color_map[int("0" + heatmap[line][column])])
-                        )
+                    line,
+                    column,
+                    str(frame[line][column]),
+                    curses.color_pair(self.cooldown_color_map[int("0" + heatmap[line][column])])
+                    )
 
         self.window.refresh()
 
@@ -231,13 +235,12 @@ def terminate_curses():
             Testing.diff))
 
 
-def controller(id,stdscr,draw_id,test_number):
+def controller(id_num, stdscr, draw_id, test_number):
 
     x = Windows(stdscr, "date", 0)
 
     curses.start_color()
     curses_color_setup()
-
 
     for y in range(Testing.iterations):
         ignore = True if y == 0 else False
@@ -248,17 +251,19 @@ def controller(id,stdscr,draw_id,test_number):
         x.heatmap_generator()
 
         height, width = stdscr.getmaxyx()
-        if draw_id.value == id:
+        if draw_id.value == id_num:
             x.draw_frame(height, width)
 
         iend = timeit.default_timer()
-        ipause = (Testing.pause - (iend - istart) - .001 )
+        ipause = (Testing.pause - (iend - istart) - .001)
         ipause = 0 if ipause < 0 else ipause
         time.sleep(ipause)
+
 
 def get_key(stdscr):
     keystroke = stdscr.getch()
     return chr(keystroke)
+
 
 def main():
     stdscr = curses.initscr()
@@ -267,13 +272,13 @@ def main():
     curses.curs_set(0)
     stdscr.keypad(True)
 
-    Testing.iterations = 26
+    Testing.iterations = 96
     Testing.start = timeit.default_timer()
     Testing.pause = 1
 
-    draw_id=multiprocessing.Value('i',1)
-    p1 = multiprocessing.Process(target=controller, args=(1,stdscr,draw_id,5))
-    p2 = multiprocessing.Process(target=controller, args=(2,stdscr,draw_id,4))
+    draw_id = multiprocessing.Value('i', 1)
+    p1 = multiprocessing.Process(target=controller, args=(1, stdscr, draw_id, 5))
+    p2 = multiprocessing.Process(target=controller, args=(2, stdscr, draw_id, 0))
     p1.start()
     p2.start()
 
@@ -284,6 +289,10 @@ def main():
             draw_id.value = 1
         elif keystroke == "2":
             draw_id.value = 2
+        elif keystroke == "3":
+            draw_id.value = 3
+        elif keystroke == "4":
+            draw_id.value = 4
         elif keystroke == "q":
             p1.terminate()
             p2.terminate()
@@ -310,4 +319,3 @@ if __name__ == "__main__":
 
     if curses.isendwin() is not True:
         terminate_curses()
-
