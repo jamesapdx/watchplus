@@ -1,0 +1,1414 @@
+#!/usr/bin/python
+# pylint: disable=line-too-long
+# pylint: disable=missing-docstring
+# pylint: disable=attribute-defined-outside-init
+from __future__ import print_function
+
+# -*- encoding: utf8 -*-
+
+import os
+import sys
+import subprocess
+import multiprocessing
+import threading
+import time
+import timeit
+import datetime
+import argparse
+import traceback
+import bisect
+import string
+import copy
+import inspect
+from time import sleep as _sleep
+
+try:
+    # sys.intern() in python3, just intern() in python2
+    from sys import intern
+except ImportError:
+    pass
+try:
+    # sys.exc_clear in python2, not python3. don't really need it in python3
+    from sys import exc_clear
+except ImportError:
+    throw_away = lambda *args, **kwargs: 1
+    sys.exc_clear = throw_away
+try:
+    import curses
+except ImportError:
+    print("Unable to load python-curses.  You may need to install the package on the OS (yum install python-curses")
+    print("or zypper in python-curses.  Exiting.")
+    sys.exit()
+
+
+# ======================================================================================================================
+#   Arguments and flags
+# ======================================================================================================================
+
+def process_argparse():
+    terminal_width = int(run_linux("tput cols")[0])
+    func = lambda prog: argparse.HelpFormatter(prog, width=terminal_width - 2)
+    description = "watchplus is a better watch, featuring pause, rewind and fast forward, scrolling up " \
+                  "and down (left/right coming soon), and supports running multiple commands simultaneously. " \
+                  "watchplus utilizes multiprocessing and only records the differences, so memory and cpu utilization"\
+                  "should be small for interval >= 1 second."
+    parser = argparse.ArgumentParser(formatter_class=func, description=description, add_help=False)
+
+    parser.add_argument("commands", nargs="*",
+                        help="[optional] command(s) to be run including flags, up to " +
+                            "9 commands allowed. If no commands are specified, defaults will be used. " +
+                            "Use quotes to seperate commands, escape quotes in commands with \\\". " +
+                            "During operation, use a keypress of 1-99 to to switch the view to each command.")
+    parser.add_argument("-d", "--differences", dest="differences", action="store_true",
+                        help="Show differences is on by default, this flag does nothing and is for compatibility " +
+                              "with watch.")
+    parser.add_argument("-n", "--interval", dest="interval", type=float,
+                        metavar="<sec>",
+                        help="Interval in seconds, minimum .01, default = 1")
+    parser.add_argument("-p", "--precise", dest="precision", action="store_true",
+                        help="Attempt to maintain interval. Aside from the first frame, if any command does not " +
+                             "complete before interval the command will be canceled and the frame for that command " +
+                             "and will show as dropped. Without this flag watchplus will try to maintain interval, " +
+                             "but will wait for all commands to finish before starting the next frame.")
+    parser.add_argument("-s", "--streaming", dest="streaming", action="store_true",
+                        help="For use with continual streaming commands such as tcpdump and ping. " +
+                        "If the first frame of a command does not complete in interval time, consider it a " +
+                        "streaming command and append new output. If recording is stopped or started, a kill -STOP " +
+                        "or kill -CONT will be issued (this may not work on all commands). If the command ends," +
+                        "existing output will continue to be displayed. Changes will be displayed, but change " +
+                        "history will be disabled. Can be mixed with non-streaming commands such as cat as long " +
+                        "as theycan complete during interval, otherwise they may mistakenly be considered steaming.")
+    parser.add_argument("-w", "--whitespace", dest="whitespace", action="store_true",
+                        help="Show full whitespace change history even due to window resizes instead of ommitting " +
+                        "areas outside of normal text. Default = off")
+    parser.add_argument("-x", "--no-history", dest="no_history", action="store_true",
+                        help="Do not display change history. Can be toggled on/off with x.")
+    parser.add_argument("-z", "--no-change", dest="no_change", action="store_true",
+                        help="Do not display changes or change history. Can be toggled on/off with z.")
+    # TODO feature: change this to stop recording after <sec>
+    # parser.add_argument("-l", dest="duration", type=int,
+    #                     metavar="<sec>",
+    #                     help="Quit after <sec> seconds, default is 0 for unlimited.")
+    parser.add_argument("-h", dest="show_help", action="store_true",
+                        help="Show this help.")
+    args = parser.parse_args()
+
+    if args.show_help:
+        parser.print_help()
+        print("")
+        print("Keys controlling playback and viewing:")
+        print("     1-99....................................... Change view to <num> command")
+        print("     x.......................................... Toggle change only/change w/ history/none")
+        print("     X.......................................... Clear change history and start fresh")
+        print("Recording controls:")
+        print("     r.......................................... Stop/Resume recording")
+        print("Playback controls:")
+        print("     Space...................................... Pause/Play")
+        print("     Aas / dfF.................................. Back/Forward one/ten/end")
+        print("     or:")
+        print("     (Shft) Left/Right Arrow.................... Back/Forward one frame")
+        print("     (Alt-Shft) Left/Right Arrow................ Back/Forward 10 frames")
+        print("     (Shft) Up-Arrow/Down-Arrow................. First/Last frame")
+        print("Viewing controls (matches vim controls):")
+        print("     hjkl | Arrows.............................. Left/Down/Up/Right")
+        print("     Ctrl-u / Ctrl-d............................ Half page up/down")
+        print("     Page-Up|Ctrl-b / Page-Down|Ctrl-f.......... Page up/down")
+        print("     g / G...................................... Top/Bottom")
+        print("     u ......................................... Toggle change history on/off")
+        print("Other controls:")
+        print("     ctrl-c | q................................. Quit")
+        print("Note: some commands may conflict with your terminal.")
+        sys.exit()
+
+    return args
+
+def process_args():
+    if args.commands:
+        if len(args.commands) > 100:
+            print("Maximum 100 commands allowed.")
+            return False
+        else:
+            Settings.commands = args.commands[0:100]
+    else:
+        # default commands
+        Settings.commands = [
+            'date +%N; date; echo "abc"',
+            'free; free -h',
+            'date +%N; date'
+            'date +%N; date; dmesg; dmesg; dmesg; dmesg; dmesg; dmesg',
+            'python -c "import timeit; print(\'{:f}\'.format( timeit.default_timer() ) )"',
+            # 'dmesg',
+            # 'cat /proc/interrupts',
+            # 'ethtool -S eno1 | column -c 100',
+            # 'adsfadffasdf',
+            # 'echo "abcgxz abc \n123456\n7890 !@#$&^"',
+            #
+            # 'date +%N; date; dmesg; dmesg; dmesg; dmesg; dmesg',
+            # 'python -c "import timeit; print(\'{:f}\'.format( timeit.default_timer() ) )"',
+            # 'dmesg',
+            # 'cat /proc/interrupts',
+            # 'ethtool -S eno1 | column -c 100',
+            # 'adsfadffasdf',
+            # 'echo "abcgxz abc \n123456\n7890 !@#$&^"'
+            #'date; sleep 9 ;  date'
+        ]
+    Settings.commands_count = len(Settings.commands)
+
+    if args.interval:
+        if args.interval >= .01:
+            Settings.interval = args.interval
+            Settings.timeout = min(.1, Settings.interval * .4)
+        else:
+            print("Interval must be greater than .001")
+            return False
+
+    args.duration = 0
+    if args.duration:
+        if args.duration > 0:
+            Settings.duration = args.duration
+        else:
+            print("Duration must be greater than 0.")
+            return False
+
+    Settings.precision = args.precision
+    Settings.whitespace = args.whitespace
+    Settings.streaming = args.streaming
+    Settings.no_history = args.no_history
+    Settings.no_change = args.no_change
+
+class Settings(object):
+    duration = 0
+    commands = []
+    commands_count = 0
+    interval = 1
+    precision = False
+    windows_count = 1
+    window_id = []
+    draw_window_id = 0
+    python_version = sys.version_info[0]
+    timeout = min(.2, interval * .5)
+    whitespace = False
+    streaming = False
+    no_history = False
+    no_change = False
+
+class Debug():
+    """ Place Debug.debug_to_file(message, message, etc.) anywhere message will be output to debug_file.
+    decorate a method with @Debug.debug_timer the time will be recorded to debug_file.
+    """
+    debug_generator = True
+    debug_generator = False
+    debug_frame_controller = False
+    debug_text_only = True
+    debug_text_only = False
+    debug_event_controller = False
+
+    debug_file = "debug"
+
+    @classmethod
+    def debug_to_file(cls, *message):
+        # enhance: change this to logging
+        with open(cls.debug_file, "a") as f:
+            for item in message:
+                f.write(str(item) + " ")
+            f.write(" \n")
+
+    @classmethod
+    def debug_timer(cls, func):
+        def wrapper_timer(*args, **kwargs):
+            start = timeit.default_timer()
+            func(*args, **kwargs)
+            stop = timeit.default_timer()
+            cls.debug_to_file(func.__name__, " time to complete: ", stop-start)
+            return func(*args, **kwargs)
+        return wrapper_timer
+
+
+# ======================================================================================================================
+#   Classes/methods that run as subprocesses
+# ======================================================================================================================
+
+class FrameControllers(object):
+    """This is the main controlling class.
+
+       Frames are merely the collection of the stdout (or stderr) of the target command or script. If the target
+       command or script is run every second for 10 seconds, 10 frames (outputs) will be generated and stored.
+       Heatmaps are numerical representation for the change state of each character in a frame, it's the highlighting
+       that occurs when a character changes from one frame to the next. See the FrameGenerators class for more details.
+
+       This class is utilized inside a multiprocess subprocess, one subprocess for each target command or script.
+
+       Class data can only be accessed from within the subprocess, multiprocess queues are utilized to share data between
+       processes.
+       """
+
+    def frame_controller(self, command, window_id, draw_window_id, event_queue, system_queue, interval, frame_draw_current):
+        """ This is the main method that controls storing and drawing frames. First, it spawns a never
+            ending generator subprocesses that builds the frames.  The generator sends the data back
+            through queues, which is then stored and drawn.
+                generator         --> |event queue  | (let's us know a new frame is available)
+                generator.frame   --> |frame_queue  | --> self.frame
+            """
+        try:
+            self.event_queue = event_queue
+            self.system_queue = system_queue
+            self.frame_draw_current = frame_draw_current
+            self.event = None
+
+            # frame fields
+            self.command = command
+            printable = string.digits + string.punctuation + string.ascii_letters + " "
+            self.command_printable = "".join([x for x in self.command if x in printable])
+            self.lines_chars = []
+            self.lines_chars_pointers = []
+            self.lines = []
+            self.lines_states = []
+            self.lines_pointers = []
+            self.lines_lengths = []
+            self.frame_length = []
+            self.frame_state = []
+            self.heatmap_state = []
+            self.frame_date_time = []
+            self.current = - 1
+            self.new = -1
+            self.max_line_length = 12000
+            self.max_line_length_message = " ...MAX LINE LENGTH EXCEEDED ({})!!".format(self.max_line_length)
+            self.max_line_length_total = len(self.max_line_length_message) + self.max_line_length
+
+            # window fields
+            self.draw_height_adder = 0
+            self.draw_width_adder = 0
+            self.terminal_draw_height = 0
+            self.terminal_draw_width = 0
+            self.draw_current = -2
+            self.draw_state = "play"
+            self.recording_state = "record"
+            self.window_id = window_id
+            self.draw_window_id = draw_window_id
+            self.window = None
+            self.terminal_height = 0
+            self.terminal_width = 0
+            self.y_top_line = 0
+            self.y_top_sub = 0
+            self.draw_move = 0
+            self.glued_to_bottom = False
+            self.resize = 0
+            self.interval = interval
+            self.next_playback = 0
+            self.playback_speed = 1.0
+            self.no_history = Settings.no_history
+            self.no_change = Settings.no_change
+            self.next_frame_type = "first"
+            self.next_heatmap_type = "first"
+
+            self.draw_initialize_window()
+            self.get_terminal_size()
+
+            # start generator
+            self.process_generator = None
+            self.initialize_generator_childprocess()
+
+            # tell event controller we are ready to go
+            self.system_queue.put(1)
+
+            # events
+            self.event_choices = {
+                "start new frame" : self.start_new_frame,
+                "new frame" : self.process_new_frame,
+                "window change" : self.window_change,
+                "refresh" : self.draw_refresh,
+                "back" : self.draw_back,
+                "forward" : self.draw_forward,
+                "window move" : self.move_window,
+                "toggle draw state" : self.draw_state_toggle,
+                "toggle recording" : self.toggle_recording,
+                "playback speed" : self.set_playback_speed,
+                "toggle history" : self.toggle_history,
+                "toggle change" : self.toggle_change,
+                "clear history" : self.clear_history
+            }
+
+            ## Start looping here ######################
+
+            while True:
+                # self.event expects a list, sent by another process
+                try:
+                    timeout = min(.02, Settings.interval *.2)
+                    #timeout = 1
+                    self.event = self.event_queue.get(block=True, timeout=timeout)
+
+                except multiprocessing.queues.Empty:
+                    self.playback_interval()
+                    if self.resize in (2, 4):
+                        # this is because curses is buggy on window resize
+                        self.resize -= 1
+                        self.draw_live_frame()
+                    else:
+                        self.resize -= 1
+                else:
+                    # run the appropriate self.event_choices function
+                    self.event_choices.get(self.event[0], "")()
+        except:
+            terminate_processes()
+
+    def initialize_generator_childprocess(self):
+        self.generator_seed = FrameGenerators()
+        self.generator_frame_queue = multiprocessing.Queue(0)
+        self.generator_event_queue = multiprocessing.Queue(0)
+        self.process_generator = multiprocessing.Process(
+            target=self.generator_seed.generator_controller,
+            args=(
+                self.command,
+                self.generator_frame_queue,
+                self.generator_event_queue,
+                self.event_queue
+            ))
+        self.process_generator.start()
+
+    def toggle_recording(self):
+        self.recording_state = self.event[1]
+        self.draw_live_frame()
+
+    def toggle_history(self):
+        if self.no_history == False:
+            self.no_history = True
+        else:
+            self.no_history = False
+        self.draw_live_frame()
+
+    def toggle_change(self):
+        if self.no_change == False:
+            self.no_change = True
+        else:
+            self.no_change = False
+        self.draw_live_frame()
+
+    def clear_history(self):
+        # self.heatmap_type = normal, first, full, refresh, ignore, noheatmap
+        for counter in range(self.draw_current, len(self.frame_state)):
+            if self.heatmap_state[counter] == "refresh":
+                break
+            self.heatmap_state[counter] = "nohistory"
+        if self.heatmap_state[counter] != "refresh":
+            self.next_heatmap_type = "refresh"
+        self.draw_live_frame()
+
+    ## PROCESS FRAMES ######################
+
+    def start_new_frame(self):
+        # self.frame_type = normal, first
+        self.new_empty_frame()
+        self.new = len(self.frame_state) - 1
+        self.new_stop_time = self.event[1]
+        self.frame_date_time[self.new] = self.event[2]
+        self.precision = self.event[3]
+        self.event_frame_count = self.event[4]
+        if len(self.frame_state) == 1:
+            self.next_frame_type = "first"
+        try:
+            self.generator_event_queue.put([self.next_frame_type, self.new_stop_time, self.precision], timeout=Settings.timeout)
+            self.next_frame_type = "normal"
+        except multiprocessing.queues.Full:
+            pass
+
+        self.current = len(self.frame_state) - 2
+        if self.current >= 0:
+            if self.frame_state[self.current] == "waiting":
+                self.frame_state[self.new] = "dropped"
+                self.frame_length[self.new] = 0
+
+        self.playback_new_frame()
+        self.draw_live_frame()
+
+    def new_empty_frame(self):
+        """ frames and heatmaps are stored in lists, so just append a new blank element to the fields """
+        self.frame_length.append(0)
+        self.frame_state.append("waiting")
+        self.heatmap_state.append("waiting")
+        self.frame_date_time.append(0)
+
+    def process_new_frame(self):
+        if self.recording_state == "record":
+            self.frame_state[self.new] = self.event[1]
+            self.frame_length[self.new] = self.event[2]
+            time.sleep(.001)
+            self.store_frame()
+        self.system_queue.put(1)
+
+    def store_frame(self):
+        new = self.new
+        previous = max(0, self.new - 1)
+
+        try:
+            frame_changes, frame_line_numbers = self.generator_frame_queue.get(block=True, timeout=Settings.timeout)
+            #frame_changes = self.generator_frame_queue.get(block=True, timeout=Settings.timeout)
+        except multiprocessing.queues.Empty:
+            # unable to get anything from the queue, just consider this an error and drop the frame
+            self.frame_state[new] = "dropped"
+            self.frame_length[new] = 0
+        else:
+            if self.frame_state[new] == "dropped":
+                self.frame_state[new] = "dropped"
+                self.frame_length[new] = 0
+            elif len(frame_changes) == 0:
+                # TODO fix len frame_changes == 0
+                pass
+            elif self.frame_state[new] == "first":
+                for line in frame_changes:
+                    line_length = min(len(line), self.max_line_length_total)
+
+                    if line_length > self.max_line_length:
+                        self.lines.append([intern(line[:self.max_line_length]) + self.max_line_length_message])
+                    else:
+                        self.lines.append([intern(line)])
+
+                    self.lines_pointers.append([0])
+                    self.lines_states.append([0])
+                    self.lines_lengths.append([line_length])
+
+                    self.lines_chars.append([[] for x in range(line_length)])
+                    self.lines_chars_pointers.append([[0] for x in range(line_length)])
+            else:
+                for counter, line_number in enumerate(frame_line_numbers):
+                    line_length = min(len(frame_changes[counter]), self.max_line_length_total)
+
+                    if line_length > self.max_line_length:
+                        line = frame_changes[counter][:self.max_line_length] + self.max_line_length_message
+                    else:
+                        line = frame_changes[counter]
+
+                    if line_number >= len(self.lines):
+                        self.lines.append([intern(line)])
+                        self.lines_pointers.append([new])
+                        self.lines_states.append([2])
+                        self.lines_lengths.append([line_length])
+
+                        self.lines_chars.append([[char] for char in line])
+                        self.lines_chars_pointers.append([[new] for x in range(line_length)])
+                    else:
+                        self.lines[line_number].append(intern(line))
+                        self.lines_pointers[line_number].append(new)
+                        self.lines_lengths[line_number].append(line_length)
+                        self.lines_states[line_number].append(1)
+
+                        for column, char in enumerate(line):
+                            if column >= len(self.lines_chars[line_number]):
+                                self.lines_chars[line_number].append([char])
+                                self.lines_chars_pointers[line_number].append([new])
+                            elif column >= self.lines_lengths[line_number][-2]:
+                                self.lines_chars[line_number][column].append(char)
+                                self.lines_chars_pointers[line_number][column].append(new)
+                            elif line_number >= self.frame_length[previous]:
+                                self.lines_chars[line_number][column].append(char)
+                                self.lines_chars_pointers[line_number][column].append(new)
+                            else:
+                                if self.lines_chars_pointers[line_number][column][-1] == 0:
+                                    last_char = self.lines[line_number][0][column]
+                                else:
+                                    last_char = self.lines_chars[line_number][column][-1]
+                                if last_char != char:
+                                    self.lines_chars[line_number][column].append(char)
+                                    self.lines_chars_pointers[line_number][column].append(new)
+
+    ## DRAW FRAMES ######################
+
+    def draw_initialize_window(self):
+        # create a new curses window
+        if Debug.debug_text_only is False:
+            self.window = curses.newwin(0,0)
+            self.window.nodelay(1)
+            self.window.keypad(True)
+
+    def window_change(self):
+        self.draw_window_id = self.event[1]
+        if self.event[2] == "new":
+            self.draw_current = self.frame_draw_current.value
+            self.draw_live_frame()
+
+    def playback_interval(self):
+        if self.window_id != self.draw_window_id:
+            return
+        elif self.draw_state == "pause":
+            return
+        elif self.draw_current == self.current:
+            return
+        elif timeit.default_timer() < self.next_playback:
+            return
+        elif self.recording_state == "stop":
+            pass
+        elif self.playback_speed == 1:
+            return
+        self.next_playback = timeit.default_timer() + (self.playback_speed * self.interval)
+        self.draw_current += 1
+        self.frame_draw_current.value = self.draw_current
+        self.draw_live_frame()
+
+    def playback_new_frame(self):
+        if self.window_id != self.draw_window_id:
+            return
+        elif self.recording_state == "stop":
+            return
+        elif self.playback_speed != 1:
+            pass
+        elif self.draw_state == "play":
+            self.draw_current += 1
+        self.frame_draw_current.value = self.draw_current
+        self.draw_live_frame()
+
+    def set_playback_speed(self):
+        # TODO enhance: finish this.  make global to all frame controllers
+        return
+
+        speed = self.event[1]
+        if speed == "slower":
+            if self.playback_speed == 4.0:
+                pass
+            self.playback_speed *= 2.0
+        if speed == "faster":
+            if self.playback_speed == 1.0 and self.interval <= .1:
+                pass
+            if self.playback_speed == .25:
+                pass
+            self.playback_speed /= 2.0
+
+    def get_terminal_size(self):
+        self.terminal_draw_height = self.terminal_height - self.draw_height_adder
+        self.terminal_draw_width = self.terminal_width - self.draw_width_adder
+
+        height = self.terminal_height
+        width = self.terminal_width
+
+        #self.terminal_height = int(run_linux("tput lines")[0])
+        #self.terminal_width = int(run_linux("tput cols")[0])
+        self.terminal_height, self.terminal_width = self.window.getmaxyx()
+
+        if height != self.terminal_height or width != self.terminal_width:
+            self.window.resize(self.terminal_height, self.terminal_width)
+            # curses doesn't redraw well, use self.resize to force a few extra redraw loops
+            self.resize = 5
+            return True
+
+    def draw_refresh(self):
+        self.draw_live_frame()
+
+    def draw_state_toggle(self):
+        if self.draw_state == "play":
+            self.draw_state = "pause"
+        else:
+            self.draw_state = "play"
+        self.draw_live_frame()
+
+    def draw_back(self):
+        amount = self.event[1]
+        if amount == 0:
+            self.draw_current = 0
+        else:
+            self.draw_current = max(0, self.draw_current - amount)
+        self.draw_live_frame()
+
+    def draw_forward(self):
+        amount = self.event[1]
+        if amount == 0:
+            self.draw_current = self.current
+        else:
+            self.draw_current = min(self.current, self.draw_current + amount)
+        self.draw_live_frame()
+
+    def move_window(self):
+        self.get_terminal_size()
+        direction = self.event[1]
+        amount = self.event[2]
+
+        if direction == "down":
+            if amount == "one":
+                self.draw_move = 1
+            elif amount == "page":
+                self.draw_move = self.terminal_draw_height
+            elif amount == "half":
+                self.draw_move = int(self.terminal_draw_height/2)
+            elif amount == "bottom":
+                self.glued_to_bottom = True
+
+        if direction == "up":
+            self.glued_to_bottom = False
+            if amount == "one":
+                self.draw_move = -1
+            elif amount == "half":
+                self.draw_move = -int(self.terminal_draw_height/2)
+            elif amount == "page":
+                self.draw_move = -self.terminal_draw_height
+            elif amount == "top":
+                self.y_top_line = 0
+                self.y_top_sub = 0
+
+        self.draw_live_frame()
+
+
+    def line_wrap(self):
+        draw_current = self.draw_current
+        if draw_current == self.draw_current:
+            live = True
+        else:
+            live = False
+        bottom = None
+
+        self.wrapped_lines = []
+
+        if self.glued_to_bottom:
+            t1 = timeit.default_timer()
+            counter = 0
+            start = max(0, self.frame_length[draw_current] - (2 * self.terminal_draw_height))
+            start = self.frame_length[draw_current] -1
+            #for line_number in range(start, self.frame_length[draw_current]):
+            for line_number in range(start, -1, -1):
+                position = -1
+                if not live:
+                    position = bisect.bisect(self.lines_pointers[line_number], draw_current) - 1
+
+                    # grep / filter out items here
+                    # if x not in self.lines[line_number]:
+                    #    continue
+
+                subs = (self.lines_lengths[line_number][position] // self.terminal_draw_width)
+                for sub in range(subs + 1):
+                    self.wrapped_lines.append([line_number, sub])
+                    counter +=1
+
+                if counter > self.terminal_draw_height + 1:
+                    break
+
+            self.wrapped_lines.reverse()
+
+            if len(self.wrapped_lines) > self.terminal_draw_height:
+                self.wrapped_top = len(self.wrapped_lines) - self.terminal_draw_height
+            else:
+                self.wrapped_top = 0
+#            Debug.debug_to_file("rsad########fasdf", self.wrapped_lines, self.wrapped_top, self.terminal_draw_height)
+            self.y_top_line = self.wrapped_lines[self.wrapped_top][0]
+            self.y_top_sub = self.wrapped_lines[self.wrapped_top][1]
+            self.wrapped_lines.reverse()
+            Debug.debug_to_file(timeit.default_timer() - t1, counter)
+        else:
+            if self.y_top_line < 0:
+                self.y_top_line = 0
+                self.y_top_sub = 0
+            elif self.y_top_line >= self.frame_length[draw_current]:
+                self.y_top_line = self.frame_length[draw_current] - 1
+                self.y_top_sub = 0
+
+            if self.y_top_sub > 0:
+                # the line may have shrunk on this frame and self.y_top_subs may be to big, correct if needed
+                position = -1
+                if not live:
+                    position = bisect.bisect(self.lines_pointers[self.y_top_line], draw_current) - 1
+
+                subs = (self.lines_lengths[self.y_top_line][position] // self.terminal_draw_width)
+                if self.y_top_sub > subs:
+                    self.y_top_sub = subs
+
+            if self.draw_move != 0:
+                start = max(0, self.y_top_line - self.terminal_draw_height)
+                end = min(self.frame_length[draw_current], self.y_top_line + (self.terminal_draw_height * 2))
+                for line_number in range(start, end):
+                    position = -1
+                    if not live:
+                        position = bisect.bisect(self.lines_pointers[line_number], draw_current) - 1
+
+                    subs = (self.lines_lengths[line_number][position] // self.terminal_draw_width)
+                    for sub in range(subs + 1):
+                        self.wrapped_lines.append([line_number, sub])
+
+                    if line_number == self.frame_length[draw_current] - 1:
+                        bottom = len(self.wrapped_lines) - 1
+
+                Debug.debug_to_file("wrapped lines subs", self.wrapped_lines)
+                self.wrapped_top = self.wrapped_lines.index([self.y_top_line, self.y_top_sub])
+
+                if self.draw_move < 0:
+                    Debug.debug_to_file("$$$$$$$$$", self.wrapped_top)
+                    Debug.debug_to_file("wrapped top1", self.wrapped_top)
+                    self.wrapped_top = max(0, self.wrapped_top + self.draw_move)
+                    Debug.debug_to_file("draw_move", self.draw_move)
+                    Debug.debug_to_file("wrapped top3", self.wrapped_top)
+                else:
+                    Debug.debug_to_file("##############", self.wrapped_top)
+                    Debug.debug_to_file("wrapped top1", self.wrapped_top)
+                    Debug.debug_to_file("wrapped lines len", len(self.wrapped_lines))
+                    Debug.debug_to_file("draw_move", self.draw_move)
+                    if len(self.wrapped_lines) > self.terminal_draw_height:
+                        self.wrapped_top = min(
+                                                len(self.wrapped_lines) - 1,
+                                                self.wrapped_top + self.draw_move)
+                        Debug.debug_to_file("wrapped top1", self.wrapped_top)
+                        self.wrapped_bottom = min(
+                                                len(self.wrapped_lines) - 1,
+                                                self.wrapped_top + self.terminal_draw_height - 1)
+                        Debug.debug_to_file("wrapped top2", self.wrapped_top)
+                        self.wrapped_top = self.wrapped_bottom - self.terminal_draw_height +1
+                        Debug.debug_to_file("wrapped top3", self.wrapped_top)
+
+                        if self.wrapped_bottom == bottom:
+                            self.glued_to_bottom = True
+                    else:
+                        self.wrapped_top = 0
+                        self.glued_to_bottom = True
+
+                b = 1
+                self.y_top_line = self.wrapped_lines[self.wrapped_top][0]
+                self.y_top_sub = self.wrapped_lines[self.wrapped_top][1]
+        self.draw_move = 0
+        Debug.debug_to_file("y top line", self.y_top_line)
+        Debug.debug_to_file("y top sub", self.y_top_sub)
+
+    def draw_live_frame(self):
+        if self.window_id != self.draw_window_id:
+            return
+
+        self.window.clear()
+
+        self.draw_height_adder = 1
+        self.draw_width_adder = 0
+        self.get_terminal_size()
+
+        draw_current = self.draw_current
+
+        if self.current < 0 or len(self.frame_state) == 0:
+            status_bar, color_pair = self.build_status_bar()
+        elif self.frame_state[draw_current] == "dropped":
+            if self.precision is True:
+                self.window.addstr("Command could not complete in time, frame dropped.")
+            else:
+                self.window.addstr("Error processing frame, frame dropped.")
+            status_bar, color_pair = self.build_status_bar()
+        elif self.frame_length[draw_current] == 0:
+            status_bar, color_pair = self.build_status_bar()
+        else:
+
+            self.line_wrap()
+
+            draw_start = self.y_top_line
+            draw_end = min(self.frame_length[draw_current], self.y_top_line + self.terminal_draw_height)
+            live = True if draw_current == self.current else False
+
+            try:
+                for line_number in range(draw_start, draw_end):
+
+                    position = -1
+                    if not live:
+                        position = bisect.bisect(self.lines_pointers[line_number], draw_current) - 1
+                    pointer = self.lines_pointers[line_number][position]
+
+                    line_start = 0
+                    if line_number == self.y_top_line:
+                        line_start = self.y_top_sub * self.terminal_draw_width
+
+                    line = self.lines[line_number][position]
+                    line_length = self.lines_lengths[line_number][position]
+                    line_state = self.lines_states[line_number][position]
+
+                    if line_state == 0:
+                        self.window.addstr(line[line_start:], curses.color_pair(0))
+                    elif line_state == 2:
+                        if pointer == draw_current:
+                            color = 2
+                        else:
+                            color = 1
+                        color_pair = curses.color_pair(color)
+                        self.window.addstr(line[line_start:], color_pair)
+                    else:
+                        for column in range(line_start,line_length):
+                            try:
+                                char = line[column]
+                            except IndexError:
+                                char = "?"
+
+                            # NEED TO DO CHAR TO CAHR LAST
+
+                            position = -1
+                            if not live:
+                                position = bisect.bisect(self.lines_chars_pointers[line_number][column], draw_current) - 1
+                            pointer = self.lines_chars_pointers[line_number][column][position]
+
+                            try:
+                                color = 0
+                                if pointer == 0:
+                                    pass
+                                elif pointer == draw_current:
+                                    color = 2
+                                else:
+                                    color = 1
+                            except (IndexError, ValueError):
+                                pass
+                            color_pair = curses.color_pair(color)
+
+                            self.window.addstr(char, color_pair)
+
+                    self.window.addstr("\n")
+
+
+            except curses.error:
+                pass
+
+            status_bar, color_pair = self.build_status_bar(draw_start, draw_end, self.frame_length[draw_current])
+
+        line_number = self.terminal_height - 1
+        for column in range(self.terminal_width - 1):
+            # need the -1 because of a bug in curses, it sticks a \n on the end of the last line
+            try:
+                char = str(status_bar[column])
+            except IndexError:
+                char = " "
+            self.window.addstr(line_number, column, char, color_pair)
+        self.window.addstr(line_number, column, " ", color_pair)
+        self.window.insstr(line_number, column, " ", color_pair)
+
+        self.window.refresh()
+
+    def build_status_bar(self, draw_start=-1, draw_end=0, frame_height=0):
+        if len(self.frame_state) == 0:
+            date_time = "  :  :  .   "
+        elif self.current < 0:
+            date_time = self.frame_date_time[self.current + 1].strftime("%H:%M:%S.%f")
+        else:
+            date_time = self.frame_date_time[self.draw_current].strftime("%H:%M:%S.%f")
+
+        mode_text = {
+            "waiting"      : ["Waiting for first frame", curses.color_pair(31)],
+            "paused"       : ["|| PAUSED  ", curses.color_pair(33)],
+            "playback"     : [">> PLAYBACK", curses.color_pair(32)],
+            "live play"    : ["<> LIVE    ", curses.color_pair(31)],
+            "live stop"    : ["<> LIVE    ", curses.color_pair(34)],
+            "recording"    : [" (STOPPED)", ""],
+            "not recording": ["", ""],
+        }
+
+        if self.current < 0:
+            mode = "waiting"
+        elif self.draw_state == "pause":
+            mode = "paused"
+        elif self.draw_current < self.current:
+            mode = "playback"
+        elif self.draw_state == "play" and self.recording_state == "stop":
+            mode = "live stop"
+        elif self.draw_state == "play":
+            mode = "live play"
+
+        if self.recording_state == "stop":
+            recording_mode = "recording"
+        else:
+            recording_mode = "not recording"
+
+        p = "  {:.12} | {} |{} {}/{} ( {}-{}/{} Lines ) | # {}"
+        status_bar = p.format(
+            date_time,
+            mode_text[mode][0],
+            mode_text[recording_mode][0],
+            max(0, self.draw_current + 1),
+            max(0, self.current + 1),
+            max(0, draw_start + 1),
+            max(0, min(draw_end, frame_height)),
+            frame_height,
+            self.command_printable)
+        return status_bar, mode_text[mode][1]
+
+
+class FrameGenerators(object):
+
+    def generator_controller(self, command, frame_queue, generator_event_queue, event_queue):
+        try:
+            self.frame = [[], []]
+            self.frame_line_numbers = [[], []]
+            self.frame_state = [None, None]
+            self.frame_changes = [{}, {}]
+            self.frame_length = [0, 0]
+
+            self.command = command
+            self.frame_queue = frame_queue
+            self.generator_event_queue = generator_event_queue
+            self.event_queue = event_queue
+            self.command_gid = None
+            self.generator_event = None
+
+            self.steaming = False
+            self.precision = False
+            self.current = 0
+            self.last = 1
+            self.frame_type = "first"
+            self.stop_time = 0
+
+            current_time = timeit.default_timer()
+            while True:
+
+                # self.frame_type = normal, full, first,
+                self.generator_event = self.generator_event_queue.get(block=True)
+                self.frame_type = self.generator_event[0]
+                self.stop_time = self.generator_event[1]
+                self.precision = self.generator_event[2]
+
+                if self.frame_type == "first":
+                    self.precision = False
+
+                self.frame_generator()
+
+                if self.precision is True and self.stop_time < timeit.default_timer():
+                    self.dropped()
+
+                self.put_queues()
+
+        except:
+            terminate_processes()
+
+    def dropped(self):
+        self.command_gid = 0
+        self.frame_state[self.current] = "dropped"
+        self.frame_length[self.current] = 0
+        self.frame_changes[self.current] = {}
+
+    ### Generator starts here ####################
+
+    def terminate_gid(self, gid):
+        term_sig = 15
+        try:
+            os.killpg(gid, term_sig)
+        except OSError:
+            pass
+        self.frame_state[self.current] = "dropped"
+
+    def frame_generator(self):
+        """ create a new frame. a frame is composed of a line by line list of the output from
+            the assigned command for this window """
+
+        terminal_width = str(int(run_linux("tput cols")[0]) - 2 )
+        env = dict(os.environ, COLUMNS=terminal_width)
+
+        proc = subprocess.Popen(
+            self.command,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            shell=True,
+            env=env,
+            universal_newlines=True,
+            preexec_fn=os.setsid
+        )
+        gid = os.getpgid(proc.pid)
+        self.command_gid = gid
+
+        safe_margin = .0001
+        if self.precision is True:
+            end_timer = max(0, self.stop_time - timeit.default_timer() - safe_margin)
+
+            if end_timer > 0:
+                timer = threading.Timer(end_timer, self.terminate_gid, args=(gid,))
+                timer.start()
+
+                result, error = proc.communicate()
+                timer.cancel()
+            else:
+                # already missed our window before we even ran the command
+                self.frame_state[self.current] = "dropped"
+
+            if self.frame_state[self.current] == "dropped":
+                self.dropped()
+                return
+        else:
+            result, error = proc.communicate()
+
+
+        self.command_gid = 0
+
+        if self.precision is True and self.stop_time < timeit.default_timer():
+            self.dropped()
+            return
+
+        # break result into a line by line list, for python 2/3
+        # TODO fix: imporve stderr
+        # don't keep ends because in python 3 it could different ends, and we only want /n
+        try:
+            self.frame[self.current] = result.splitlines()
+            self.frame[self.current] += error.splitlines()
+        except (AttributeError, UnicodeDecodeError):
+            self.frame[self.current] = ""
+            self.frame[self.current] = str(result).splitlines()
+            self.frame[self.current] = str(error).splitlines()
+
+        if self.precision is True and self.stop_time < timeit.default_timer():
+            self.dropped()
+            return
+
+        self.frame_length[self.current] = len(self.frame[self.current])
+
+        if self.frame_type == "first":
+            self.frame_line_numbers[self.current] = []
+            self.frame_state[self.current] = "first"
+        elif self.frame_length[self.current] != self.frame_length[self.last]:
+            self.frame_change()
+        elif self.frame[self.current] != self.frame[self.last]:
+            self.frame_change()
+        else:
+            self.frame_state[self.current] = "unchanged"
+            self.frame_changes[self.current] = []
+            self.frame_line_numbers[self.current] = []
+
+        if self.precision is True and self.stop_time < timeit.default_timer():
+            self.dropped()
+
+    def frame_change(self):
+        self.frame_state[self.current] = "changed"
+        self.frame_changes[self.current] = []
+        self.frame_line_numbers[self.current] = []
+        for line_number, line in enumerate(self.frame[self.current]):
+            try:
+                if line != self.frame[self.last][line_number]:
+                    self.frame_changes[self.current].append(line)
+                    self.frame_line_numbers[self.current].append(line_number)
+            except IndexError:
+                self.frame_changes[self.current].append(line)
+                self.frame_line_numbers[self.current].append(line_number)
+
+
+    ## Put queues #########################
+
+    def put_queues(self):
+        try:
+            if self.frame_state[self.current] == "first":
+                self.frame_queue.put(
+                    (self.frame[self.current], self.frame_line_numbers[self.current]),
+                    timeout=Settings.timeout)
+            else:
+                self.frame_queue.put(
+                    (self.frame_changes[self.current], self.frame_line_numbers[self.current]),
+                    timeout=Settings.timeout)
+        except multiprocessing.queues.Full:
+            # missed the timout, that's ok, if nothing in the queue the receiver will just call it dropped
+            pass
+
+        self.event_queue.put([
+            "new frame",
+            self.frame_state[self.current],
+            self.frame_length[self.current]])
+
+        if self.frame_state[self.current] != "dropped":
+            if self.current == 0:
+                self.current = 1
+                self.last = 0
+            else:
+                self.current = 0
+                self.last = 1
+
+
+# ======================================================================================================================
+#   Event Controller
+# ======================================================================================================================
+
+class EventController(object):
+
+    def __init__(self):
+        self.key_mapping()
+
+    def event_controller(self, window, draw_window_id, event_queues, system_queues, terminate_queue):
+        try:
+            self.window = window
+            self.draw_window_id = draw_window_id
+            self.event_queues = event_queues
+            self.system_queues = system_queues
+            self.terminate_queue = terminate_queue
+
+            self.draw_window_ids = range(Settings.commands_count)
+            self.start_time = timeit.default_timer()
+            self.interval = Settings.interval
+            self.precision = Settings.precision
+            self.new_stop_time = 0
+            self.new_start_date_time = 0
+            self.done_count = 0
+            self.event_frame_count = 0
+            self.recording_state = "record"
+
+            current_time = timeit.default_timer()
+
+            while True:
+                step = min(.02, Settings.interval *.2)
+                time.sleep(step)
+
+                if timeit.default_timer() > self.new_stop_time and self.recording_state == "record":
+                    if self.done_count >= len(self.draw_window_ids):
+                        self.done_count = 0
+                        self.new_stop_time = self.interval + timeit.default_timer()
+                        self.new_start_date_time = datetime.datetime.now()
+
+                        for window_id in self.draw_window_ids:
+                            event_queues[window_id].put(["start new frame",
+                                                         self.new_stop_time,
+                                                         self.new_start_date_time,
+                                                         self.precision,
+                                                         self.event_frame_count]
+                                                         )
+                        self.event_frame_count += 1
+                    else:
+                        for draw_window_id in self.draw_window_ids:
+                            # collect "frame done" from the frame controllers
+                            try:
+                                self.done_count += int(self.system_queues[draw_window_id].get(block=False))
+                            except multiprocessing.queues.Empty:
+                                pass
+
+                self.keyboard_input()
+
+        except:
+            terminate_processes()
+
+    def key_mapping(self):
+        self.key_map = {
+            ord(" ")          : ["all", "toggle draw state"],
+
+            ord("-")          : ["one", "playback speed", "slower" ],
+            ord("_")          : ["one", "playback speed", "slower" ],
+            ord("+")          : ["one", "playback speed", "faster" ],
+            ord("=")          : ["one", "playback speed", "faster" ],
+
+            393               : ["one", "back", 1], #shf-left-arrow
+            ord("s")          : ["one", "back", 1],
+            552               : ["one", "back", 10], #alt-shf-left-arrow
+            ord("a")          : ["one", "back", 10],
+            336               : ["one", "back", 0], #sht-down-arrow
+            530               : ["one", "back", 0], #alt-sht-down-arrow
+            ord("A")          : ["one", "back", 0],
+            402               : ["one", "forward", 1], #shf-right-arrow
+            ord("d")          : ["one", "forward", 1],
+            567               : ["one", "forward", 10], #alt-shf-right-arrow
+            ord("f")          : ["one", "forward", 10],
+            337               : ["one", "forward", 0], #shf-up-arrow
+            573               : ["one", "forward", 0], #alt-shf-up-arrow
+            ord("F")          : ["one", "forward", 0],
+
+            curses.KEY_DOWN   : ["one", "window move", "down", "one"],
+            ord("j")          : ["one", "window move", "down", "one"],
+            4                 : ["one", "window move", "down", "half"], #ctrl-d
+            curses.KEY_NPAGE  : ["one", "window move", "down", "page"], #page down
+            6                 : ["one", "window move", "down", "page"], #ctrl-f
+            ord("G")          : ["one", "window move", "down", "bottom"],
+
+            curses.KEY_UP     : ["one", "window move", "up", "one"],
+            ord("k")          : ["one", "window move", "up", "one"],
+            21                : ["one", "window move", "up", "half"], #ctrl-u
+            curses.KEY_PPAGE  : ["one", "window move", "up", "page"], #page up
+            2                 : ["one", "window move", "up", "page"], #ctrl-b
+            ord("g")          : ["one", "window move", "up", "top"],
+
+            ord("X")          : ["one", "clear history"]
+        }
+
+    def keyboard_input(self):
+        # TODO fix: r key record on off
+        self.last_keystroke = 0
+        self.last_keystroke_time = timeit.default_timer()
+
+        self.window.nodelay(1)
+        raw_keystroke = self.window.getch()
+        keystroke_time = timeit.default_timer()
+        keystroke_time_delta = timeit.default_timer() - self.last_keystroke_time
+
+        # to see keystroke codes uncomment this line and tail -f debug on the commond line
+        if raw_keystroke != -1:
+            #Debug.debug_to_file("raw: " + str(raw_keystroke)  )
+            pass
+
+        if raw_keystroke == curses.KEY_RESIZE:
+            self.event_queues[self.draw_window_id].put(("refresh",))
+
+        if raw_keystroke >= 48 and raw_keystroke <= 57:
+            # TODO fix: double key doesn't work now
+            # TODO enhance: name the numbers
+            # number presses, used to change command views
+            if self.last_keystroke >= 48 and self.last_keystroke <= 57 and keystroke_time_delta < .6 and len(self.draw_window_ids) >= 9:
+                    new_win = ((self.last_keystroke - 48) * 10) + (raw_keystroke - 48) - 1
+            else:
+                new_win = raw_keystroke - 48 - 1
+            if new_win < len(self.draw_window_ids) and new_win >= 0 and new_win != self.draw_window_id:
+                try:
+                    self.event_queues[self.draw_window_id].put(("window change", new_win, "close"), timeout=Settings.timeout)
+                    self.draw_window_id = new_win
+                    self.event_queues[self.draw_window_id].put(("window change", new_win, "new"), timeout=Settings.timeout)
+                except multiprocessing.queues.Full:
+                    pass
+
+        if raw_keystroke == ord("r"):
+            if self.recording_state == "record":
+                self.recording_state = "stop"
+                self.key_map[ord("r")] = ["all", "toggle recording", "stop"]
+            else:
+                self.recording_state = "record"
+                self.key_map[ord("r")] = ["all", "toggle recording", "record"]
+                self.new_stop_time = 0
+
+        if raw_keystroke in self.key_map:
+            if self.key_map[raw_keystroke][0] == "all":
+                win = self.draw_window_ids
+            else:
+                win = [self.draw_window_id]
+            instruction = self.key_map[raw_keystroke][1:]
+            for window_id in win:
+                try:
+                    self.event_queues[window_id].put(instruction, timeout=Settings.timeout)
+                except multiprocessing.queues.Full:
+                    pass
+
+
+        if raw_keystroke == ord("q"):
+            sys.exc_clear()
+            terminate_processes()
+
+        self.last_keystroke = raw_keystroke
+        self.last_keystroke_time = keystroke_time
+
+
+# ======================================================================================================================
+#   Functions
+# ======================================================================================================================
+
+def new_sleep(stop_time):
+    """ Curses sends a SIGWINCH to time.sleep and mp.Queue(timeout=) when the window is resized, which terminates them
+        prematurely. To prevent this we must build our own timer. (This will not fix mp.Queue(timeout=))
+        """
+    stop = timeit.default_timer() + stop_time
+    while stop >= timeit.default_timer():
+        try:
+            _sleep(max(0, stop - timeit.default_timer()))
+        except ValueError:
+            pass
+        x = timeit.default_timer()
+time.sleep = new_sleep
+
+
+def run_linux(command, stdout=subprocess.PIPE):
+    result, error = subprocess.Popen(
+        command,
+        stdout=stdout,
+        stderr=subprocess.PIPE,
+        shell=True,
+        universal_newlines=True
+        ).communicate()
+    return result, error
+
+def start_curses():
+    stdscr = curses.initscr()
+    curses.noecho()
+    curses.cbreak()
+    curses.curs_set(0)
+    stdscr.keypad(True)
+    return stdscr
+
+def curses_color_setup():
+    curses.init_pair(1, curses.COLOR_BLACK, curses.COLOR_YELLOW)
+    curses.init_pair(2, curses.COLOR_BLACK, curses.COLOR_RED)
+    curses.init_pair(3, curses.COLOR_BLACK, curses.COLOR_BLUE)
+    curses.init_pair(31, curses.COLOR_BLACK, curses.COLOR_GREEN)
+    curses.init_pair(32, curses.COLOR_BLACK, curses.COLOR_CYAN)
+    curses.init_pair(33, curses.COLOR_BLACK, curses.COLOR_YELLOW)
+    curses.init_pair(34, curses.COLOR_BLACK, curses.COLOR_RED)
+
+def terminate_processes(message=None):
+    exception = str(traceback.format_exc())
+    terminate_curses()
+    time.sleep(.1)
+    if "KeyboardInterrupt" not in exception and "None\n" not in exception:
+        print(exception)
+    if message:
+        print(message)
+    term_sig = 15
+    try:
+        os.killpg(os.getpgid(0), term_sig)
+    except (TypeError, OSError):
+        pass
+    sys.exit()
+
+def terminate_curses():
+    curses.echo()
+    curses.nocbreak()
+    curses.curs_set(1)
+    curses.endwin()
+
+class Main(object):
+
+    event_queues = []
+    system_queues = []
+    frame_draw_current = 0
+    process_main = os.getpid()
+    process_frame_controllers = []
+    process_event_controller = []
+
+    def main_controller(self):
+
+        stdscr = start_curses()
+        curses.start_color()
+        curses_color_setup()
+
+
+        Main.frame_draw_current = multiprocessing.Value("i", 0)
+        Main.system_queue = multiprocessing.Queue(0)
+        frame_controller_seed = FrameControllers()
+        for x in range(Settings.commands_count):
+            Settings.window_id.append(x)
+            Main.event_queues.append("")
+            Main.system_queues.append("")
+            Main.process_frame_controllers.append("")
+
+
+            Main.event_queues[x] = multiprocessing.Queue(0)
+            Main.system_queues[x] = multiprocessing.Queue(0)
+            Main.process_frame_controllers[x] = multiprocessing.Process(
+                target=frame_controller_seed.frame_controller,
+                args=(
+                    Settings.commands[x],
+                    Settings.window_id[x],
+                    Settings.draw_window_id,
+                    Main.event_queues[x],
+                    Main.system_queues[x],
+                    Settings.interval,
+                    Main.frame_draw_current
+                ))
+
+        for x in range(Settings.commands_count):
+            Main.process_frame_controllers[x].start()
+
+
+        Main.terminate_queue = multiprocessing.Queue(0)
+        event_controller_seed = EventController()
+        Main.process_event_controller = multiprocessing.Process(
+            target=event_controller_seed.event_controller,
+            args=(
+                stdscr,
+                Settings.draw_window_id,
+                Main.event_queues,
+                Main.system_queues,
+                Main.terminate_queue
+            ))
+        Main.process_event_controller.start()
+        Main.process_event_controller.join()
+
+
+if __name__ == "__main__":
+
+    args = process_argparse()
+    return_status = process_args()
+    if return_status is False:
+        sys.exit()
+
+    try:
+        main = Main()
+        main.main_controller()
+    except:
+        terminate_processes()
+
+# TODO fix: don't redraw if paused
+# TODO fix: adjust help to terminal width
+# TODO feature: reverse output
+# TODO feature: playback with variable speed, add to status bar
+# TODO feature: improve status bar
+# TODO feature: add help bar
+# TODO feature: add search feature
+# TODO feature: only show changed frames
+# TODO feature: jump to next/last changed frame
+# TODO feature: add detailed help -hh
+# TODO feature: read/write to file
+# TODO feature: match watch flags
+
