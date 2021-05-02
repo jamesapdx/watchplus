@@ -1,2 +1,2 @@
 # watch-plus
-python recreation of the Linux watch command with advanced features
+Python recreation of the Linux watch command with advanced many features.

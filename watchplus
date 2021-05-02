@@ -18,8 +18,6 @@ import argparse
 import traceback
 import bisect
 import string
-import copy
-import inspect
 from time import sleep as _sleep
 
 try:
@@ -48,44 +46,25 @@ except ImportError:
 def process_argparse():
     terminal_width = int(run_linux("tput cols")[0])
     func = lambda prog: argparse.HelpFormatter(prog, width=terminal_width - 2)
-    description = "watchplus is a better watch, featuring pause, rewind and fast forward, scrolling up " \
-                  "and down (left/right coming soon), and supports running multiple commands simultaneously. " \
-                  "watchplus utilizes multiprocessing and only records the differences, so memory and cpu utilization"\
-                  "should be small for interval >= 1 second."
+    description = "watchplus is a better watch, featuring pause, rewind and fast forward, scrolling up and down, and " + \
+                  "supports multiple tabs simultaneously."
     parser = argparse.ArgumentParser(formatter_class=func, description=description, add_help=False)
 
     parser.add_argument("commands", nargs="*",
-                        help="[optional] command(s) to be run including flags, up to " +
-                            "9 commands allowed. If no commands are specified, defaults will be used. " +
-                            "Use quotes to seperate commands, escape quotes in commands with \\\". " +
-                            "During operation, use a keypress of 1-99 to to switch the view to each command.")
-    parser.add_argument("-d", "--differences", dest="differences", action="store_true",
-                        help="Show differences is on by default, this flag does nothing and is for compatibility " +
-                              "with watch.")
+                        help="[optional] command(s) to be run, including flags, up to 9 commands allowed. Each " +
+                        "command is run in a separate tab.")
     parser.add_argument("-n", "--interval", dest="interval", type=float,
                         metavar="<sec>",
                         help="Interval in seconds, minimum .01, default = 1")
     parser.add_argument("-p", "--precise", dest="precision", action="store_true",
-                        help="Attempt to maintain interval. Aside from the first frame, if any command does not " +
-                             "complete before interval the command will be canceled and the frame for that command " +
-                             "and will show as dropped. Without this flag watchplus will try to maintain interval, " +
-                             "but will wait for all commands to finish before starting the next frame.")
+                        help="Attempt to maintain interval, drop frame if not completed in time. default = off.")
     parser.add_argument("-s", "--streaming", dest="streaming", action="store_true",
-                        help="For use with continual streaming commands such as tcpdump and ping. " +
-                        "If the first frame of a command does not complete in interval time, consider it a " +
-                        "streaming command and append new output. If recording is stopped or started, a kill -STOP " +
-                        "or kill -CONT will be issued (this may not work on all commands). If the command ends," +
-                        "existing output will continue to be displayed. Changes will be displayed, but change " +
-                        "history will be disabled. Can be mixed with non-streaming commands such as cat as long " +
-                        "as theycan complete during interval, otherwise they may mistakenly be considered steaming.")
-    parser.add_argument("-w", "--whitespace", dest="whitespace", action="store_true",
-                        help="Show full whitespace change history even due to window resizes instead of ommitting " +
-                        "areas outside of normal text. Default = off")
-    parser.add_argument("-x", "--no-history", dest="no_history", action="store_true",
-                        help="Do not display change history. Can be toggled on/off with x.")
-    parser.add_argument("-z", "--no-change", dest="no_change", action="store_true",
-                        help="Do not display changes or change history. Can be toggled on/off with z.")
-    # TODO feature: change this to stop recording after <sec>
+                        help="For use with continual streaming commands such as tcpdump and ping. ")
+    # TODO add feature
+    # parser.add_argument("-x", "--no-history", dest="no_history", action="store_true",
+    #                     help="Do not display change history. Can be toggled on/off with x.")
+    # parser.add_argument("-z", "--no-change", dest="no_change", action="store_true",
+    #                     help="Do not display changes or change history. Can be toggled on/off with z.")
     # parser.add_argument("-l", dest="duration", type=int,
     #                     metavar="<sec>",
     #                     help="Quit after <sec> seconds, default is 0 for unlimited.")
@@ -95,42 +74,39 @@ def process_argparse():
 
     if args.show_help:
         parser.print_help()
-        print("")
-        print("Keys controlling playback and viewing:")
-        print("     1-99....................................... Change view to <num> command")
-        print("     x.......................................... Toggle change only/change w/ history/none")
-        print("     X.......................................... Clear change history and start fresh")
-        print("Recording controls:")
-        print("     r.......................................... Stop/Resume recording")
-        print("Playback controls:")
-        print("     Space...................................... Pause/Play")
-        print("     Aas / dfF.................................. Back/Forward one/ten/end")
-        print("     or:")
-        print("     (Shft) Left/Right Arrow.................... Back/Forward one frame")
-        print("     (Alt-Shft) Left/Right Arrow................ Back/Forward 10 frames")
-        print("     (Shft) Up-Arrow/Down-Arrow................. First/Last frame")
-        print("Viewing controls (matches vim controls):")
-        print("     hjkl | Arrows.............................. Left/Down/Up/Right")
-        print("     Ctrl-u / Ctrl-d............................ Half page up/down")
-        print("     Page-Up|Ctrl-b / Page-Down|Ctrl-f.......... Page up/down")
-        print("     g / G...................................... Top/Bottom")
-        print("     u ......................................... Toggle change history on/off")
-        print("Other controls:")
-        print("     ctrl-c | q................................. Quit")
-        print("Note: some commands may conflict with your terminal.")
+        help = """
+Keys controlling playback and viewing:
+     0-9........................................ Change tab
+     X.......................................... Clear change history and start fresh
+Playback controls:
+     Space...................................... Pause | Play
+     A a s | d f F.............................. Back | Forward (one|ten|end)
+     or:
+     (Shft) Left/Right Arrow.................... Back | Forward (one frame)
+     (Alt-Shft) Left/Right Arrow................ Back | Forward (10 frames)
+     (Shft) Up-Arrow/Down-Arrow................. First | Last frame
+Viewing controls (matches vim controls):
+     j k | Arrows............................... Down | Up
+     Ctrl-u | Ctrl-d............................ Half page up | down
+     Page-Up/Ctrl-b | Page-Down/Ctrl-f.......... Page up | down
+     g | G...................................... Top | Bottom
+Other controls:
+     ctrl-c | q................................. Quit
+Note: some commands may conflict with your terminal."""
+        print(help)
         sys.exit()
 
     return args
 
 def process_args():
     if args.commands:
-        if len(args.commands) > 100:
-            print("Maximum 100 commands allowed.")
+        if len(args.commands) > 10:
+            print("Maximum 10 commands allowed.")
             return False
         else:
             Settings.commands = args.commands[0:100]
     else:
-        # default commands
+        # commands for testing
         Settings.commands = [
             'date +%N; date; echo "abc"',
             'free; free -h',
@@ -171,10 +147,9 @@ def process_args():
             return False
 
     Settings.precision = args.precision
-    Settings.whitespace = args.whitespace
     Settings.streaming = args.streaming
-    Settings.no_history = args.no_history
-    Settings.no_change = args.no_change
+    # Settings.no_history = args.no_history
+    # Settings.no_change = args.no_change
 
 class Settings(object):
     duration = 0
@@ -187,10 +162,9 @@ class Settings(object):
     draw_window_id = 0
     python_version = sys.version_info[0]
     timeout = min(.2, interval * .5)
-    whitespace = False
     streaming = False
-    no_history = False
-    no_change = False
+    # no_history = False
+    # no_change = False
 
 class Debug():
     """ Place Debug.debug_to_file(message, message, etc.) anywhere message will be output to debug_file.
@@ -296,8 +270,8 @@ class FrameControllers(object):
             self.interval = interval
             self.next_playback = 0
             self.playback_speed = 1.0
-            self.no_history = Settings.no_history
-            self.no_change = Settings.no_change
+            # self.no_history = Settings.no_history
+            # self.no_change = Settings.no_change
             self.next_frame_type = "first"
             self.next_heatmap_type = "first"
 
@@ -323,8 +297,8 @@ class FrameControllers(object):
                 "toggle draw state" : self.draw_state_toggle,
                 "toggle recording" : self.toggle_recording,
                 "playback speed" : self.set_playback_speed,
-                "toggle history" : self.toggle_history,
-                "toggle change" : self.toggle_change,
+                # "toggle history" : self.toggle_history,
+                # "toggle change" : self.toggle_change,
                 "clear history" : self.clear_history
             }
 
@@ -369,19 +343,21 @@ class FrameControllers(object):
         self.recording_state = self.event[1]
         self.draw_live_frame()
 
-    def toggle_history(self):
-        if self.no_history == False:
-            self.no_history = True
-        else:
-            self.no_history = False
-        self.draw_live_frame()
+    #TODO add no_history
+    # def toggle_history(self):
+    #     if self.no_history == False:
+    #         self.no_history = True
+    #     else:
+    #         self.no_history = False
+    #     self.draw_live_frame()
 
-    def toggle_change(self):
-        if self.no_change == False:
-            self.no_change = True
-        else:
-            self.no_change = False
-        self.draw_live_frame()
+    #TODO add no_change
+    # def toggle_change(self):
+    #     if self.no_change == False:
+    #         self.no_change = True
+    #     else:
+    #         self.no_change = False
+    #     self.draw_live_frame()
 
     def clear_history(self):
         # self.heatmap_type = normal, first, full, refresh, ignore, noheatmap
@@ -515,7 +491,7 @@ class FrameControllers(object):
     def draw_initialize_window(self):
         # create a new curses window
         if Debug.debug_text_only is False:
-            self.window = curses.newwin(0,0)
+            self.window = curses.newwin(0, 0)
             self.window.nodelay(1)
             self.window.keypad(True)
 
@@ -672,7 +648,7 @@ class FrameControllers(object):
                 subs = (self.lines_lengths[line_number][position] // self.terminal_draw_width)
                 for sub in range(subs + 1):
                     self.wrapped_lines.append([line_number, sub])
-                    counter +=1
+                    counter += 1
 
                 if counter > self.terminal_draw_height + 1:
                     break
@@ -736,13 +712,10 @@ class FrameControllers(object):
                     Debug.debug_to_file("wrapped lines len", len(self.wrapped_lines))
                     Debug.debug_to_file("draw_move", self.draw_move)
                     if len(self.wrapped_lines) > self.terminal_draw_height:
-                        self.wrapped_top = min(
-                                                len(self.wrapped_lines) - 1,
-                                                self.wrapped_top + self.draw_move)
+                        self.wrapped_top = min(len(self.wrapped_lines) - 1, self.wrapped_top + self.draw_move)
                         Debug.debug_to_file("wrapped top1", self.wrapped_top)
-                        self.wrapped_bottom = min(
-                                                len(self.wrapped_lines) - 1,
-                                                self.wrapped_top + self.terminal_draw_height - 1)
+                        self.wrapped_bottom = min(len(self.wrapped_lines) - 1,
+                            self.wrapped_top + self.terminal_draw_height - 1)
                         Debug.debug_to_file("wrapped top2", self.wrapped_top)
                         self.wrapped_top = self.wrapped_bottom - self.terminal_draw_height +1
                         Debug.debug_to_file("wrapped top3", self.wrapped_top)
@@ -844,7 +817,6 @@ class FrameControllers(object):
                             self.window.addstr(char, color_pair)
 
                     self.window.addstr("\n")
-
 
             except curses.error:
                 pass
