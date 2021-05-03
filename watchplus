@@ -866,8 +866,9 @@ class FrameControllers(object):
         else:
             recording_mode = "not recording"
 
-        p = "  {:.12} | {} |{} {}/{} ( {}-{}/{} Lines ) | # {}"
+        p = " {:>2} | {:.12} | {} |{} {}/{} ( {}-{}/{} Lines ) | {}"
         status_bar = p.format(
+            self.draw_window_id + 1,
             date_time,
             mode_text[mode][0],
             mode_text[recording_mode][0],
