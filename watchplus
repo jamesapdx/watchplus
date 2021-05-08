@@ -17,6 +17,7 @@ import argparse
 import traceback
 import bisect
 import string
+import shlex
 from time import sleep as _sleep
 
 try:
@@ -43,129 +44,164 @@ except ImportError:
 # ======================================================================================================================
 
 def process_argparse():
-    terminal_width = int(run_linux("tput cols")[0])
-    func = lambda prog: argparse.HelpFormatter(prog, width=terminal_width - 2)
-    description = "watchplus is a better watch, featuring pause, rewind and fast forward, scrolling up and down, and "
-    "supports multiple tabs simultaneously."
-    parser = argparse.ArgumentParser(formatter_class=func, description=description, add_help=False)
-
-    parser.add_argument("commands", nargs="*",
-                        help="[optional] command(s) to be run, including flags, up to 9 commands allowed. Each "
-                        "command is run in a separate tab.")
-    parser.add_argument("-n", "--interval", dest="interval", type=float,
-                        metavar="<sec>",
-                        help="Interval in seconds, minimum .01, default = 1")
-    parser.add_argument("-p", "--precise", dest="precision", action="store_true",
-                        help="Attempt to maintain interval, drop frame if not completed in time. default = off.")
-    parser.add_argument("-s", "--streaming", dest="streaming", action="store_true",
-                        help="For use with continual streaming commands such as tcpdump and ping. ")
-    # TODO add feature
-    # parser.add_argument("-x", "--no-history", dest="no_history", action="store_true",
-    #                     help="Do not display change history. Can be toggled on/off with x.")
-    # parser.add_argument("-z", "--no-change", dest="no_change", action="store_true",
-    #                     help="Do not display changes or change history. Can be toggled on/off with z.")
-    # parser.add_argument("-l", dest="duration", type=int,
-    #                     metavar="<sec>",
-    #                     help="Quit after <sec> seconds, default is 0 for unlimited.")
-    parser.add_argument("-h", dest="show_help", action="store_true",
-                        help="Show this help.")
-    args = parser.parse_args()
-
-    if args.show_help:
-        parser.print_help()
-        help_keys = """
-Keys controlling playback and viewing:
-     0-9........................................ Change tab
-     X.......................................... Clear change history and start fresh
-Playback controls:
-     Space...................................... Pause | Play
-     A a s | d f F.............................. Back | Forward (one|ten|end)
-     or:
-     (Shft) Left/Right Arrow.................... Back | Forward (one frame)
-     (Alt-Shft) Left/Right Arrow................ Back | Forward (10 frames)
-     (Shft) Up-Arrow/Down-Arrow................. First | Last frame
-Viewing controls (matches vim controls):
-     j k | Arrows............................... Down | Up
-     Ctrl-u | Ctrl-d............................ Half page up | down
-     Page-Up/Ctrl-b | Page-Down/Ctrl-f.......... Page up | down
-     g | G...................................... Top | Bottom
-Other controls:
-     ctrl-c | q................................. Quit"""
-        print(help_keys)
-        sys.exit()
-
-    return args
-
-
-def process_args():
-    if args.commands:
-        if len(args.commands) > 10:
-            print("Maximum 10 commands allowed.")
-            return False
-        else:
-            Settings.commands = args.commands[0:100]
+    argv_split = split_command_line_argv()
+    argv_split, system_args = extract_system_args(argv_split)
+    if system_args.arg_file:
+        argv_split = read_args_from_file(system_args.arg_file)
+        source = system_args.arg_file.name
     else:
-        # commands for testing
-        Settings.commands = [
-            'date +%N; date; echo "abc"',
-            'free; free -h',
-            'date +%N; date'
-            'date +%N; date; dmesg; dmesg; dmesg; dmesg; dmesg; dmesg',
-            'python -c "import timeit; print(\'{:f}\'.format( timeit.default_timer() ) )"',
-            # 'dmesg',
-            # 'cat /proc/interrupts',
-            # 'ethtool -S eno1 | column -c 100',
-            # 'adsfadffasdf',
-            # 'echo "abcgxz abc \n123456\n7890 !@#$&^"',
-            #
-            # 'date +%N; date; dmesg; dmesg; dmesg; dmesg; dmesg',
-            # 'python -c "import timeit; print(\'{:f}\'.format( timeit.default_timer() ) )"',
-            # 'dmesg',
-            # 'cat /proc/interrupts',
-            # 'ethtool -S eno1 | column -c 100',
-            # 'adsfadffasdf',
-            # 'echo "abcgxz abc \n123456\n7890 !@#$&^"'
-            # 'date; sleep 9 ;  date'
-        ]
+        source = "command line"
+    command_args = extract_command_args(argv_split, source)
+    validate_args(system_args, command_args)
+    assign_args(system_args, command_args)
+    return system_args, command_args
+
+def split_command_line_argv():
+    argv_split = [[]]
+    for argv in sys.argv[1:]:
+        # split into command groups based on --, it's the only way argparse can handle it
+        if argv == "-h" or argv == "--help":
+            print_help()
+            sys.exit()
+        elif argv == "--":
+            argv_split.append([])
+        elif argv.startswith("-") and argv in argv_split[-1]:
+            message = f"duplicate {argv}, perhaps missing '--' separator"
+            raise argparse.ArgumentError(None, message)
+        else:
+            argv_split[-1].append(argv)
+
+    return argv_split
+
+def extract_system_args(argv_split):
+    parser = init_system_parser()
+    add_system_args(parser)
+    arg = parser.parse_known_args(args=argv_split[0])
+    system_args = arg[0]
+    argv_split[0] = arg[1]
+    return argv_split, system_args
+
+def read_args_from_file(arg_file):
+    argsv_split = []
+    with arg_file as f:
+        for line in f:
+            if line and not line.strip().startswith("#"):
+                argsv_split.append(shlex.split(line))
+    return argsv_split
+
+def extract_command_args(argv_split, source):
+    command_args = []
+    count = 1
+    print(f"Source: {source}")
+    for argv in argv_split:
+        if argv:
+            parser = init_command_parser()
+            add_command_args(parser)
+            if len(argv_split) > 1:
+                print(f"assigning command {count} to tab {count}: {argv}")
+            command_args.append(parser.parse_args(args=argv))
+            count += 1
+
+    return command_args
+
+def validate_args(system_args, command_args):
+    if not command_args:
+        message = f"No commands found."
+        raise argparse.ArgumentError(None, message)
+    elif len(command_args) > 9:
+        message = f"Only 9 commands allowed, {len(args)} provided."
+        raise argparse.ArgumentError(None, message)
+
+    if system_args.interval < .01:
+        raise argparse.ArgumentError(None, "Interval cannot be less than .01.")
+
+    for arg in command_args:
+        if arg.lines and arg.lines < 1:
+            message = f"lines can not be less than 1 for command: {arg.command}"
+            raise argparse.ArgumentError(None, message)
+
+def assign_args(system_args, command_args):
+    Settings.interval = system_args.interval
+    Settings.timeout = min(.1, Settings.interval * .4)
+    Settings.precision = system_args.precision
+
+    for arg in command_args:
+        Settings.commands.append(arg.command)
+        Settings.streaming.append(arg.streaming)
+        Settings.lines.append(arg.lines)
     Settings.commands_count = len(Settings.commands)
 
-    if args.interval:
-        if args.interval >= .01:
-            Settings.interval = args.interval
-            Settings.timeout = min(.1, Settings.interval * .4)
-        else:
-            print("Interval must be greater than .001")
-            return False
+def print_help():
+    parser = init_system_parser()
+    add_system_args(parser)
+    add_command_args(parser)
+    parser.print_help()
 
-    args.duration = 0
-    if args.duration:
-        if args.duration > 0:
-            Settings.duration = args.duration
-        else:
-            print("Duration must be greater than 0.")
-            return False
+def init_system_parser():
+    terminal_width = int(run_linux("tput cols")[0])
+    format_func = lambda prog: argparse.RawTextHelpFormatter(prog, width=terminal_width - 2, max_help_position=32)
+    usage = "%(prog)s [system options] [command options] command [-- [command options] command]...\n"
+    "Example:"
+    description = "%(prog)s - a better watch. Featuring pause, rewind and fast forward, scrolling up and down, and " \
+    "multiple tabs running indivudal commands simultaneously. Also supports streaming commands such as ping and tcpdump."
+    epilog = """
+Keys controlling playback and viewing:
+  Playback controls:
+     Space.................................. Play | Pause 
+     (Play/Pause does not stop recording)
+     s a A | d f F.......................... Back | Forward (one|ten|end) frames
+     Left/Right Arrow....................... Back | Forward (one|Shft:ten|Alt-Shft:end)
+  Viewing controls:
+     1-9.................................... Change tab
+     k j | Up / Down Arrow.................. Up | Down
+     Ctrl-u | Ctrl-d........................ Half page up | down
+     Page-Up/Ctrl-b | Page-Down/Ctrl-f...... Page up | down
+     g | G.................................. Top | Bottom
+  Other controls:
+     ctrl-c | q............................. Quit"""
 
-    Settings.precision = args.precision
-    Settings.streaming = args.streaming
-    # Settings.no_history = args.no_history
-    # Settings.no_change = args.no_change
+    return argparse.ArgumentParser(formatter_class=format_func,
+                                   description=description,
+                                   usage=usage,
+                                   epilog=epilog,
+                                   add_help=False)
 
+def init_command_parser():
+    return argparse.ArgumentParser()
+
+def add_system_args(parser):
+    group = parser.add_argument_group("System options")
+    group.add_argument("-n", "--interval", dest="interval", type=float, metavar="<s>", default=1.0,
+                        help="Interval in <seconds>, minimum .01, default = 1.")
+    group.add_argument("-p", "--precise", dest="precision", action="store_true",
+                        help="Attempt to maintain interval, drop frame if not completed in time.")
+    group.add_argument("-f", "--file", dest="arg_file", type=argparse.FileType('r'), metavar="<f>",
+                       help="Read commands and command options from <file>. Example:\n-l 20 \"dmesg\"")
+    group.add_argument("-h", "--help", dest="show_help", action="store_true",
+                        help="Show this help.")
+
+def add_command_args(parser):
+    group = parser.add_argument_group("Command options")
+    group.add_argument("-s", "--streaming", dest="streaming", action="store_true",
+                        help="For use with continual streaming commands such as tcpdump and ping.")
+    group.add_argument("-l", "--lines", dest="lines", type=int, metavar="<l>",
+                        help="Only include last number of <lines>.")
+    group.add_argument("command", help="Command to be run, up to 9 commands with options allowed.\n"
+                       "Each command is run in a separate tab.\n"
+                       "Separate additional options and commands using a --.\n"
+                       "Commands MUST be enclosed in DOUBLE quotes with inside SINGLE quotes as needed.")
 
 class Settings(object):
-    duration = 0
     commands = []
+    streaming = []
+    lines = []
     commands_count = 0
     interval = 1
+    timeout = .4
     precision = False
-    windows_count = 1
     window_id = []
     draw_window_id = 0
     python_version = sys.version_info[0]
-    timeout = min(.2, interval * .5)
-    streaming = False
-    # no_history = False
-    # no_change = False
-
 
 class Debug():
     """ Place Debug.debug_to_file(message, message, etc.) anywhere message will be output to debug_file.
@@ -656,7 +692,7 @@ class FrameControllers(object):
                 self.wrapped_top = len(self.wrapped_lines) - self.terminal_draw_height
             else:
                 self.wrapped_top = 0
-                # Debug.debug_to_file("#######", self.wrapped_lines, self.wrapped_top, self.terminal_draw_height)
+                # Debug.debug_to_file(self.wrapped_lines, self.wrapped_top, self.terminal_draw_height)
             self.y_top_line = self.wrapped_lines[self.wrapped_top][0]
             self.y_top_sub = self.wrapped_lines[self.wrapped_top][1]
             self.wrapped_lines.reverse()
@@ -698,16 +734,11 @@ class FrameControllers(object):
                 self.wrapped_top = self.wrapped_lines.index([self.y_top_line, self.y_top_sub])
 
                 if self.draw_move < 0:
-                    Debug.debug_to_file("$$$$$$$$$", self.wrapped_top)
                     Debug.debug_to_file("wrapped top1", self.wrapped_top)
                     self.wrapped_top = max(0, self.wrapped_top + self.draw_move)
                     Debug.debug_to_file("draw_move", self.draw_move)
-                    Debug.debug_to_file("wrapped top3", self.wrapped_top)
                 else:
-                    Debug.debug_to_file("##############", self.wrapped_top)
-                    Debug.debug_to_file("wrapped top1", self.wrapped_top)
                     Debug.debug_to_file("wrapped lines len", len(self.wrapped_lines))
-                    Debug.debug_to_file("draw_move", self.draw_move)
                     if len(self.wrapped_lines) > self.terminal_draw_height:
                         self.wrapped_top = min(len(self.wrapped_lines) - 1, self.wrapped_top + self.draw_move)
                         Debug.debug_to_file("wrapped top1", self.wrapped_top)
@@ -715,7 +746,6 @@ class FrameControllers(object):
                                                   self.wrapped_top + self.terminal_draw_height - 1)
                         Debug.debug_to_file("wrapped top2", self.wrapped_top)
                         self.wrapped_top = self.wrapped_bottom - self.terminal_draw_height + 1
-                        Debug.debug_to_file("wrapped top3", self.wrapped_top)
 
                         if self.wrapped_bottom == bottom:
                             self.glued_to_bottom = True
@@ -1128,20 +1158,19 @@ class EventController(object):
             ord("+")          : ["one", "playback speed", "faster"],
             ord("=")          : ["one", "playback speed", "faster"],
 
-            393               : ["one", "back", 1],  # shf-left-arrow
-            ord("s")          : ["one", "back", 1],
-            552               : ["one", "back", 10],  # alt-shf-left-arrow
-            ord("a")          : ["one", "back", 10],
-            336               : ["one", "back", 0],  # sht-down-arrow
-            530               : ["one", "back", 0],  # alt-sht-down-arrow
-            ord("A")          : ["one", "back", 0],
-            402               : ["one", "forward", 1],  # shf-right-arrow
-            ord("d")          : ["one", "forward", 1],
-            567               : ["one", "forward", 10],  # alt-shf-right-arrow
-            ord("f")          : ["one", "forward", 10],
-            337               : ["one", "forward", 0],  # shf-up-arrow
-            573               : ["one", "forward", 0],  # alt-shf-up-arrow
-            ord("F")          : ["one", "forward", 0],
+            curses.KEY_LEFT: ["one", "back", 1],  # left-arrow
+            ord("s"): ["one", "back", 1],
+            393: ["one", "back", 10],  # shf-left-arror
+            ord("a"): ["one", "back", 10],
+            552: ["one", "back", 0],  # alt-shf-left-arrow
+            ord("A"): ["one", "back", 0],
+
+            curses.KEY_RIGHT: ["one", "forward", 1],  # right-arrow
+            ord("d"): ["one", "forward", 1],
+            402: ["one", "forward", 10],  # shf-right-arrow
+            ord("f"): ["one", "forward", 10],
+            567: ["one", "forward", 0],  # alt-shf-right-arrow
+            ord("F"): ["one", "forward", 0],
 
             curses.KEY_DOWN   : ["one", "window move", "down", "one"],
             ord("j")          : ["one", "window move", "down", "one"],
@@ -1347,12 +1376,10 @@ if __name__ == "__main__":
     # make our own custom sleep
     time.sleep = new_sleep
 
-    args = process_argparse()
-    return_status = process_args()
-    if return_status is False:
-        sys.exit()
+    process_argparse()
 
     try:
+        print("Starting...")
         main = Main()
         main.main_controller()
     except:
