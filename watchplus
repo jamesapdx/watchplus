@@ -176,20 +176,23 @@ def add_system_args(parser):
     group.add_argument("-p", "--precise", dest="precision", action="store_true",
                         help="Attempt to maintain interval, drop frame if not completed in time.")
     group.add_argument("-f", "--file", dest="arg_file", type=argparse.FileType('r'), metavar="<f>",
-                       help="Read commands and command options from <file>. Example:\n-l 20 \"dmesg\"")
+                       help="Read commands and command options from <file> instead, one per line. "
+                            "Example:\n-l 20 \"dmesg\"\n-s -l 10 \"ping -4 1.1.1.1\"")
     group.add_argument("-h", "--help", dest="show_help", action="store_true",
                         help="Show this help.")
 
 def add_command_args(parser):
     group = parser.add_argument_group("Command options")
+    group.add_argument("--", dest="not_used", action="store_true",
+                       help="Separator if using multiple commands on the command line. Not needed for the first one.\n"
+                            "Example: %(prog)s -n 1 -l 20 \"dmesg\" -- -s -l 10 \"ping -4 1.1.1.1\" -- \"echo -n hello\"")
     group.add_argument("-s", "--streaming", dest="streaming", action="store_true",
-                        help="For use with continual streaming commands such as tcpdump and ping.")
+                       help="For use with continual streaming commands such as tcpdump and ping.")
     group.add_argument("-l", "--lines", dest="lines", type=int, metavar="<l>",
-                        help="Only include last number of <lines>.")
-    group.add_argument("command", help="Command to be run, up to 9 commands with options allowed.\n"
-                       "Each command is run in a separate tab.\n"
-                       "Separate additional options and commands using a --.\n"
-                       "Commands MUST be enclosed in DOUBLE quotes with inside SINGLE quotes as needed.")
+                       help="Only include last number of <lines>.")
+    group.add_argument("command", help="Command to be run, up to 9 commands allowed. Each command is run in a "
+                                       "separate tab.\n"
+                                       "Note: enclosed in DOUBLE quotes with inside escaped quotes as needed.")
 
 class Settings(object):
     commands = []
@@ -236,7 +239,7 @@ class Debug():
 
 
 # ======================================================================================================================
-#   Classes/methods that run as subprocesses
+#   Frame Controller, drawing the output, moving around, switching tabs (windows)
 # ======================================================================================================================
 
 class FrameControllers(object):
@@ -911,6 +914,10 @@ class FrameControllers(object):
         return status_bar, mode_text[mode][1]
 
 
+# ======================================================================================================================
+#   Frame Generator, running, reading, storing a command
+# ======================================================================================================================
+
 class FrameGenerators(object):
 
     def generator_controller(self, command, frame_queue, generator_event_queue, event_queue):
@@ -937,8 +944,9 @@ class FrameGenerators(object):
 
             while True:
 
-                # self.frame_type = normal, full, first,
+                # frame_controller sends us the parameters for this new frame
                 self.generator_event = self.generator_event_queue.get(block=True)
+                # self.frame_type = normal, full, first,
                 self.frame_type = self.generator_event[0]
                 self.stop_time = self.generator_event[1]
                 self.precision = self.generator_event[2]
@@ -1093,7 +1101,7 @@ class FrameGenerators(object):
 
 
 # ======================================================================================================================
-#   Event Controller
+#   Event Controller, key presses
 # ======================================================================================================================
 
 class EventController(object):
