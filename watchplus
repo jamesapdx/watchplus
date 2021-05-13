@@ -124,6 +124,7 @@ def assign_args(system_args, command_args):
     for arg in command_args:
         Settings.commands.append(arg.command)
         Settings.streaming.append(arg.streaming)
+        Settings.glue_bottom.append(arg.glue_bottom)
     Settings.commands_count = len(Settings.commands)
 
 def print_help():
@@ -137,8 +138,9 @@ def init_system_parser():
     format_func = lambda prog: argparse.RawTextHelpFormatter(prog, width=terminal_width - 2, max_help_position=32)
     usage = "%(prog)s [system options] [command options] command [-- [command options] command]...\n"
     "Example:"
-    description = "%(prog)s - a better watch. Featuring pause, rewind and fast forward, scrolling up and down, and " \
-    "multiple tabs running indivudal commands simultaneously. Also supports streaming commands such as ping and tcpdump."
+    description = "%(prog)s - a better watch. Featuring pause, rewind and forward, scrolling up and down, line " \
+    "wrapping, multiple tabs running indivudal commands simultaneously, and more. Also supports streaming commands " \
+    "such as ping and tcpdump."
     epilog = """
 Keys controlling playback and viewing:
   Playback controls:
@@ -183,6 +185,8 @@ def add_command_args(parser):
                             "Example: %(prog)s -n 1 \"dmesg\" -- -s \"ping -4 1.1.1.1\" -- \"echo -n hello\"")
     group.add_argument("-s", "--streaming", dest="streaming", action="store_true",
                        help="For use with continual streaming commands such as tcpdump and ping.")
+    group.add_argument("-b", "--bottom", dest="glue_bottom", action="store_true",
+                       help="Start this tab at the bottom of the output, similar to follow command, useful with dmesg.")
     group.add_argument("command", help="Command to be run, up to 9 commands allowed. Each command is run in a "
                                        "separate tab.\n"
                                        "Note: enclosed in DOUBLE quotes with inside escaped quotes as needed.")
@@ -190,6 +194,7 @@ def add_command_args(parser):
 class Settings(object):
     commands = []
     streaming = []
+    glue_bottom = []
     commands_count = 0
     interval = 1
     timeout = .4
@@ -257,7 +262,7 @@ class FrameControllers(object):
        """
 
     def frame_controller(self, command, window_id, draw_window_id, event_queue, system_queue, interval,
-                         frame_draw_current, streaming):
+                         frame_draw_current, streaming, glue_bottom):
         """ This is the main method that controls storing and drawing frames. First, it spawns a never
             ending generator subprocesses that builds the frames.  The generator sends the data back
             through queues, which is then stored and drawn.
@@ -286,7 +291,7 @@ class FrameControllers(object):
             self.frame_date_time = []
             self.current = - 1
             self.new = -1
-            self.max_line_length = 12000
+            self.max_line_length = 30000
             self.max_line_length_message = " ...MAX LINE LENGTH EXCEEDED ({})!!".format(self.max_line_length)
             self.max_line_length_total = len(self.max_line_length_message) + self.max_line_length
             self.streaming = streaming
@@ -307,13 +312,13 @@ class FrameControllers(object):
             self.y_top_line = 0
             self.y_top_sub = 0
             self.draw_move = 0
-            self.glued_to_bottom = True if streaming else False
+            self.glued_to_bottom = True if streaming or glue_bottom else False
             self.resize = 0
             self.interval = interval
             self.next_playback = 0
             self.playback_speed = 1.0
             # self.no_history = Settings.no_history
-            # self.no_change = Settings.no_change
+            # self.no_change = True
             self.next_frame_type = "first"
             self.next_heatmap_type = "first"
 
@@ -394,12 +399,12 @@ class FrameControllers(object):
     #     self.draw_live_frame()
 
     # TODO add no_change
-    # def toggle_change(self):
-    #     if self.no_change == False:
-    #         self.no_change = True
-    #     else:
-    #         self.no_change = False
-    #     self.draw_live_frame()
+    def toggle_change(self):
+        if self.no_change == False:
+            self.no_change = True
+        else:
+            self.no_change = False
+        self.draw_live_frame()
 
     def clear_history(self):
         # self.heatmap_type = normal, first, full, refresh, ignore, noheatmap
@@ -813,7 +818,7 @@ class FrameControllers(object):
                     line_length = self.lines_lengths[line_number][position]
                     line_state = self.lines_states[line_number][position]
 
-                    if line_state == 0:
+                    if line_state == 0 or self.no_change:
                         self.window.addstr(line[line_start:], curses.color_pair(0))
                     elif line_state == 2:
                         if pointer == draw_current:
@@ -1242,16 +1247,22 @@ class EventController(object):
             curses.KEY_DOWN   : ["one", "window move", "down", "one"],
             ord("j")          : ["one", "window move", "down", "one"],
             4                 : ["one", "window move", "down", "half"],  # ctrl-d
+            336               : ["one", "window move", "down", "half"],  # shift-down
             curses.KEY_NPAGE  : ["one", "window move", "down", "page"],  # page down
             6                 : ["one", "window move", "down", "page"],  # ctrl-f
             ord("G")          : ["one", "window move", "down", "bottom"],
+            curses.KEY_END    : ["one", "window move", "down", "bottom"],
+            526               : ["one", "window move", "down", "bottom"],  # ctrl-down
 
             curses.KEY_UP     : ["one", "window move", "up", "one"],
             ord("k")          : ["one", "window move", "up", "one"],
             21                : ["one", "window move", "up", "half"],  # ctrl-u
+            337               : ["one", "window move", "up", "half"],  # shift-up
             curses.KEY_PPAGE  : ["one", "window move", "up", "page"],  # page up
             2                 : ["one", "window move", "up", "page"],  # ctrl-b
             ord("g")          : ["one", "window move", "up", "top"],
+            curses.KEY_HOME   : ["one", "window move", "up", "top"],
+            567               : ["one", "window move", "up", "top"],  # crtl-up
 
             ord("X")          : ["one", "clear history"]
         }
@@ -1418,7 +1429,8 @@ class Main(object):
                     Main.system_queues[x],
                     Settings.interval,
                     Main.frame_draw_current,
-                    Settings.streaming[x]
+                    Settings.streaming[x],
+                    Settings.glue_bottom[x]
                 ))
 
         for x in range(Settings.commands_count):

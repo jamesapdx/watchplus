@@ -1,6 +1,6 @@
 "date +%N; date; echo 'This is a test'"
-"free; free -h"
-"dmesg"
+"free; echo; free -h; top -b -n 1"
+-b "dmesg"
 -s "ping 1.1.1.1"
 #"date"
 "python -c 'import timeit; print(\"{:f}\".format( timeit.default_timer() ) )'"
