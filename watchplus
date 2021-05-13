@@ -18,6 +18,7 @@ import traceback
 import bisect
 import string
 import shlex
+import fcntl
 from time import sleep as _sleep
 
 try:
@@ -115,11 +116,6 @@ def validate_args(system_args, command_args):
     if system_args.interval < .01:
         raise argparse.ArgumentError(None, "Interval cannot be less than .01.")
 
-    for arg in command_args:
-        if arg.lines and arg.lines < 1:
-            message = f"lines can not be less than 1 for command: {arg.command}"
-            raise argparse.ArgumentError(None, message)
-
 def assign_args(system_args, command_args):
     Settings.interval = system_args.interval
     Settings.timeout = min(.1, Settings.interval * .4)
@@ -128,7 +124,6 @@ def assign_args(system_args, command_args):
     for arg in command_args:
         Settings.commands.append(arg.command)
         Settings.streaming.append(arg.streaming)
-        Settings.lines.append(arg.lines)
     Settings.commands_count = len(Settings.commands)
 
 def print_help():
@@ -177,7 +172,7 @@ def add_system_args(parser):
                         help="Attempt to maintain interval, drop frame if not completed in time.")
     group.add_argument("-f", "--file", dest="arg_file", type=argparse.FileType('r'), metavar="<f>",
                        help="Read commands and command options from <file> instead, one per line. "
-                            "Example:\n-l 20 \"dmesg\"\n-s -l 10 \"ping -4 1.1.1.1\"")
+                            "Example:\n\"dmesg\"\n-s \"ping -4 1.1.1.1\"")
     group.add_argument("-h", "--help", dest="show_help", action="store_true",
                         help="Show this help.")
 
@@ -185,11 +180,9 @@ def add_command_args(parser):
     group = parser.add_argument_group("Command options")
     group.add_argument("--", dest="not_used", action="store_true",
                        help="Separator if using multiple commands on the command line. Not needed for the first one.\n"
-                            "Example: %(prog)s -n 1 -l 20 \"dmesg\" -- -s -l 10 \"ping -4 1.1.1.1\" -- \"echo -n hello\"")
+                            "Example: %(prog)s -n 1 \"dmesg\" -- -s \"ping -4 1.1.1.1\" -- \"echo -n hello\"")
     group.add_argument("-s", "--streaming", dest="streaming", action="store_true",
                        help="For use with continual streaming commands such as tcpdump and ping.")
-    group.add_argument("-l", "--lines", dest="lines", type=int, metavar="<l>",
-                       help="Only include last number of <lines>.")
     group.add_argument("command", help="Command to be run, up to 9 commands allowed. Each command is run in a "
                                        "separate tab.\n"
                                        "Note: enclosed in DOUBLE quotes with inside escaped quotes as needed.")
@@ -197,7 +190,6 @@ def add_command_args(parser):
 class Settings(object):
     commands = []
     streaming = []
-    lines = []
     commands_count = 0
     interval = 1
     timeout = .4
@@ -218,9 +210,17 @@ class Debug():
     debug_event_controller = False
 
     debug_file = "debug"
+    debug_file_clear = True
 
     @classmethod
     def debug_to_file(cls, *message):
+        if cls.debug_file_clear:
+            try:
+                os.remove(cls.debug_file)
+            except:
+                pass
+            cls.debug_file_clear = False
+
         # enhance: change this to logging
         with open(cls.debug_file, "a") as f:
             for item in message:
@@ -256,7 +256,8 @@ class FrameControllers(object):
        processes.
        """
 
-    def frame_controller(self, command, window_id, draw_window_id, event_queue, system_queue, interval, frame_draw_current):
+    def frame_controller(self, command, window_id, draw_window_id, event_queue, system_queue, interval,
+                         frame_draw_current, streaming):
         """ This is the main method that controls storing and drawing frames. First, it spawns a never
             ending generator subprocesses that builds the frames.  The generator sends the data back
             through queues, which is then stored and drawn.
@@ -288,6 +289,7 @@ class FrameControllers(object):
             self.max_line_length = 12000
             self.max_line_length_message = " ...MAX LINE LENGTH EXCEEDED ({})!!".format(self.max_line_length)
             self.max_line_length_total = len(self.max_line_length_message) + self.max_line_length
+            self.streaming = streaming
 
             # window fields
             self.draw_height_adder = 0
@@ -305,7 +307,7 @@ class FrameControllers(object):
             self.y_top_line = 0
             self.y_top_sub = 0
             self.draw_move = 0
-            self.glued_to_bottom = False
+            self.glued_to_bottom = True if streaming else False
             self.resize = 0
             self.interval = interval
             self.next_playback = 0
@@ -374,7 +376,8 @@ class FrameControllers(object):
                 self.command,
                 self.generator_frame_queue,
                 self.generator_event_queue,
-                self.event_queue
+                self.event_queue,
+                self.streaming
             ))
         self.process_generator.start()
 
@@ -420,6 +423,8 @@ class FrameControllers(object):
         self.event_frame_count = self.event[4]
         if len(self.frame_state) == 1:
             self.next_frame_type = "first"
+            self.precision = False
+
         try:
             self.generator_event_queue.put([self.next_frame_type, self.new_stop_time, self.precision], timeout=Settings.timeout)
             self.next_frame_type = "normal"
@@ -699,7 +704,7 @@ class FrameControllers(object):
             self.y_top_line = self.wrapped_lines[self.wrapped_top][0]
             self.y_top_sub = self.wrapped_lines[self.wrapped_top][1]
             self.wrapped_lines.reverse()
-            Debug.debug_to_file(timeit.default_timer() - t1, counter)
+            # Debug.debug_to_file(timeit.default_timer() - t1, counter)
         else:
             if self.y_top_line < 0:
                 self.y_top_line = 0
@@ -733,21 +738,21 @@ class FrameControllers(object):
                     if line_number == self.frame_length[draw_current] - 1:
                         bottom = len(self.wrapped_lines) - 1
 
-                Debug.debug_to_file("wrapped lines subs", self.wrapped_lines)
+                # Debug.debug_to_file("wrapped lines subs", self.wrapped_lines)
                 self.wrapped_top = self.wrapped_lines.index([self.y_top_line, self.y_top_sub])
 
                 if self.draw_move < 0:
-                    Debug.debug_to_file("wrapped top1", self.wrapped_top)
+                    # Debug.debug_to_file("wrapped top1", self.wrapped_top)
                     self.wrapped_top = max(0, self.wrapped_top + self.draw_move)
-                    Debug.debug_to_file("draw_move", self.draw_move)
+                    # Debug.debug_to_file("draw_move", self.draw_move)
                 else:
-                    Debug.debug_to_file("wrapped lines len", len(self.wrapped_lines))
+                    # Debug.debug_to_file("wrapped lines len", len(self.wrapped_lines))
                     if len(self.wrapped_lines) > self.terminal_draw_height:
                         self.wrapped_top = min(len(self.wrapped_lines) - 1, self.wrapped_top + self.draw_move)
-                        Debug.debug_to_file("wrapped top1", self.wrapped_top)
+                        # Debug.debug_to_file("wrapped top1", self.wrapped_top)
                         self.wrapped_bottom = min(len(self.wrapped_lines) - 1,
                                                   self.wrapped_top + self.terminal_draw_height - 1)
-                        Debug.debug_to_file("wrapped top2", self.wrapped_top)
+                        # Debug.debug_to_file("wrapped top2", self.wrapped_top)
                         self.wrapped_top = self.wrapped_bottom - self.terminal_draw_height + 1
 
                         if self.wrapped_bottom == bottom:
@@ -759,8 +764,8 @@ class FrameControllers(object):
                 self.y_top_line = self.wrapped_lines[self.wrapped_top][0]
                 self.y_top_sub = self.wrapped_lines[self.wrapped_top][1]
         self.draw_move = 0
-        Debug.debug_to_file("y top line", self.y_top_line)
-        Debug.debug_to_file("y top sub", self.y_top_sub)
+        # Debug.debug_to_file("y top line", self.y_top_line)
+        # Debug.debug_to_file("y top sub", self.y_top_sub)
 
     def draw_live_frame(self):
         if self.window_id != self.draw_window_id:
@@ -920,22 +925,24 @@ class FrameControllers(object):
 
 class FrameGenerators(object):
 
-    def generator_controller(self, command, frame_queue, generator_event_queue, event_queue):
+    def generator_controller(self, command, frame_queue, generator_event_queue, event_queue, streaming):
         try:
             self.frame = [[], []]
-            self.frame_line_numbers = [[], []]
-            self.frame_state = [None, None]
-            self.frame_changes = [{}, {}]
+            self.frame_line_numbers = []
+            self.frame_state = None
+            self.frame_changes = []
             self.frame_length = [0, 0]
+            self.frame_stream_length = 0
 
             self.command = command
             self.frame_queue = frame_queue
             self.generator_event_queue = generator_event_queue
             self.event_queue = event_queue
             self.command_gid = None
+            self.proc = None
             self.generator_event = None
 
-            self.steaming = False
+            self.streaming = streaming
             self.precision = False
             self.current = 0
             self.last = 1
@@ -951,13 +958,15 @@ class FrameGenerators(object):
                 self.stop_time = self.generator_event[1]
                 self.precision = self.generator_event[2]
 
-                if self.frame_type == "first":
-                    self.precision = False
-
-                self.frame_generator()
-
-                if self.precision is True and self.stop_time < timeit.default_timer():
-                    self.dropped()
+                if self.streaming:
+                    if self.frame_type == "first":
+                        self.frame_generator_streaming_first()
+                    self.frame_generator_streaming()
+                else:
+                    self.frame_generator()
+                    self.frame_pre_change()
+                    if self.precision is True and self.stop_time < timeit.default_timer():
+                        self.dropped()
 
                 self.put_queues()
 
@@ -966,11 +975,9 @@ class FrameGenerators(object):
 
     def dropped(self):
         self.command_gid = 0
-        self.frame_state[self.current] = "dropped"
+        self.frame_state = "dropped"
         self.frame_length[self.current] = 0
-        self.frame_changes[self.current] = {}
-
-    # Generator starts here ####################
+        self.frame_changes = []
 
     def terminate_gid(self, gid):
         term_sig = 15
@@ -978,12 +985,9 @@ class FrameGenerators(object):
             os.killpg(gid, term_sig)
         except OSError:
             pass
-        self.frame_state[self.current] = "dropped"
+        self.frame_state = "dropped"
 
-    def frame_generator(self):
-        """ create a new frame. a frame is composed of a line by line list of the output from
-            the assigned command for this window """
-
+    def run_command(self):
         terminal_width = str(int(run_linux("tput cols")[0]) - 2)
         env = dict(os.environ, COLUMNS=terminal_width)
 
@@ -996,30 +1000,84 @@ class FrameGenerators(object):
             universal_newlines=True,
             preexec_fn=os.setsid
         )
-        gid = os.getpgid(proc.pid)
-        self.command_gid = gid
+        self.command_gid = os.getpgid(proc.pid)
+
+        return proc
+
+    # Streaming Generator starts here ####################
+
+    def frame_generator_streaming_first(self):
+        self.proc = self.run_command()
+        fl_out = fcntl.fcntl(self.proc.stdout, fcntl.F_GETFL)
+        fl_err = fcntl.fcntl(self.proc.stderr, fcntl.F_GETFL)
+        fcntl.fcntl(self.proc.stdout, fcntl.F_SETFL, fl_out | os.O_NONBLOCK)
+        fcntl.fcntl(self.proc.stderr, fcntl.F_SETFL, fl_err | os.O_NONBLOCK)
+
+    def frame_generator_streaming(self):
+        safe_margin = .0001
+        end_timer = max(0, self.stop_time - timeit.default_timer() - safe_margin)
+        time.sleep(end_timer)
+
+        try:
+            result = self.proc.stdout.read()
+        except TypeError:
+            result = ""
+        try:
+            error = self.proc.stderr.read()
+        except TypeError:
+            error = ""
+
+        try:
+            self.frame[self.current] = result.splitlines()
+            self.frame[self.current] += error.splitlines()
+        except (AttributeError, UnicodeDecodeError):
+            self.frame[self.current] = str(result).splitlines()
+            self.frame[self.current] = str(error).splitlines()
+
+
+        if self.frame_type == "first":
+            self.frame_state = "first"
+            self.frame_line_numbers = []
+        elif not self.frame[self.current]:
+            self.frame_state = "unchanged"
+            self.frame_changes = []
+            self.frame_line_numbers = []
+        else:
+            self.frame_state = "changed"
+            self.frame_changes = self.frame[self.current]
+            self.frame_line_numbers = list(
+                range(self.frame_stream_length, self.frame_stream_length + len(self.frame[self.current])))
+
+        self.frame_stream_length += len(self.frame[self.current])
+        self.frame_length[self.current] = self.frame_stream_length
+
+    # Non Streaming Generator starts here ####################
+
+    def frame_generator(self):
+        """ a frame is composed of a line by line list of the output from
+            the assigned command for this window """
+
+        self.proc = self.run_command()
 
         safe_margin = .0001
         if self.precision is True:
             end_timer = max(0, self.stop_time - timeit.default_timer() - safe_margin)
 
             if end_timer > 0:
-                timer = threading.Timer(end_timer, self.terminate_gid, args=(gid,))
+                timer = threading.Timer(end_timer, self.terminate_gid, args=(self.command_gid,))
                 timer.start()
 
-                result, error = proc.communicate()
+                result, error = self.proc.communicate()
                 timer.cancel()
             else:
                 # already missed our window before we even ran the command
-                self.frame_state[self.current] = "dropped"
+                self.frame_state = "dropped"
 
-            if self.frame_state[self.current] == "dropped":
+            if self.frame_state == "dropped":
                 self.dropped()
                 return
         else:
-            result, error = proc.communicate()
-
-        self.command_gid = 0
+            result, error = self.proc.communicate()
 
         if self.precision is True and self.stop_time < timeit.default_timer():
             self.dropped()
@@ -1040,47 +1098,48 @@ class FrameGenerators(object):
             self.dropped()
             return
 
+    def frame_pre_change(self):
         self.frame_length[self.current] = len(self.frame[self.current])
 
         if self.frame_type == "first":
-            self.frame_line_numbers[self.current] = []
-            self.frame_state[self.current] = "first"
+            self.frame_line_numbers = []
+            self.frame_state = "first"
         elif self.frame_length[self.current] != self.frame_length[self.last]:
             self.frame_change()
         elif self.frame[self.current] != self.frame[self.last]:
             self.frame_change()
         else:
-            self.frame_state[self.current] = "unchanged"
-            self.frame_changes[self.current] = []
-            self.frame_line_numbers[self.current] = []
+            self.frame_state = "unchanged"
+            self.frame_changes = []
+            self.frame_line_numbers = []
 
         if self.precision is True and self.stop_time < timeit.default_timer():
             self.dropped()
 
     def frame_change(self):
-        self.frame_state[self.current] = "changed"
-        self.frame_changes[self.current] = []
-        self.frame_line_numbers[self.current] = []
+        self.frame_state = "changed"
+        self.frame_changes = []
+        self.frame_line_numbers = []
         for line_number, line in enumerate(self.frame[self.current]):
             try:
                 if line != self.frame[self.last][line_number]:
-                    self.frame_changes[self.current].append(line)
-                    self.frame_line_numbers[self.current].append(line_number)
+                    self.frame_changes.append(line)
+                    self.frame_line_numbers.append(line_number)
             except IndexError:
-                self.frame_changes[self.current].append(line)
-                self.frame_line_numbers[self.current].append(line_number)
+                self.frame_changes.append(line)
+                self.frame_line_numbers.append(line_number)
 
     # Put queues #########################
 
     def put_queues(self):
         try:
-            if self.frame_state[self.current] == "first":
+            if self.frame_state == "first":
                 self.frame_queue.put(
-                    (self.frame[self.current], self.frame_line_numbers[self.current]),
+                    (self.frame[self.current], self.frame_line_numbers),
                     timeout=Settings.timeout)
             else:
                 self.frame_queue.put(
-                    (self.frame_changes[self.current], self.frame_line_numbers[self.current]),
+                    (self.frame_changes, self.frame_line_numbers),
                     timeout=Settings.timeout)
         except multiprocessing.queues.Full:
             # missed the timout, that's ok, if nothing in the queue the receiver will just call it dropped
@@ -1088,10 +1147,10 @@ class FrameGenerators(object):
 
         self.event_queue.put([
             "new frame",
-            self.frame_state[self.current],
+            self.frame_state,
             self.frame_length[self.current]])
 
-        if self.frame_state[self.current] != "dropped":
+        if self.frame_state != "dropped":
             if self.current == 0:
                 self.current = 1
                 self.last = 0
@@ -1207,8 +1266,8 @@ class EventController(object):
         keystroke_time = timeit.default_timer()
         keystroke_time_delta = timeit.default_timer() - self.last_keystroke_time
 
-        # to see keystroke codes uncomment this line and tail -f debug on the commond line
         if raw_keystroke != -1:
+            # to see keystroke codes uncomment this line and tail -f debug on the commond line
             # Debug.debug_to_file("raw: " + str(raw_keystroke)  )
             pass
 
@@ -1358,7 +1417,8 @@ class Main(object):
                     Main.event_queues[x],
                     Main.system_queues[x],
                     Settings.interval,
-                    Main.frame_draw_current
+                    Main.frame_draw_current,
+                    Settings.streaming[x]
                 ))
 
         for x in range(Settings.commands_count):
