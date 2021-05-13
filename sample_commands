@@ -1,5 +1,5 @@
 "date +%N; date; echo 'This is a test'"
-"free; echo; free -h; top -b -n 1"
+-x "free; echo; free -h; top -b -n 1"
 -b "dmesg"
 -s "ping 1.1.1.1"
 #"date"

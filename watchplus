@@ -125,6 +125,7 @@ def assign_args(system_args, command_args):
         Settings.commands.append(arg.command)
         Settings.streaming.append(arg.streaming)
         Settings.glue_bottom.append(arg.glue_bottom)
+        Settings.no_change.append(arg.no_change)
     Settings.commands_count = len(Settings.commands)
 
 def print_help():
@@ -150,6 +151,7 @@ Keys controlling playback and viewing:
      Left/Right Arrow....................... Back | Forward (one|Shft:ten|Alt-Shft:end)
   Viewing controls:
      1-9.................................... Change tab
+     x...................................... Toggle display of change history on/off
      k j | Up / Down Arrow.................. Up | Down
      Ctrl-u | Ctrl-d........................ Half page up | down
      Page-Up/Ctrl-b | Page-Down/Ctrl-f...... Page up | down
@@ -187,6 +189,8 @@ def add_command_args(parser):
                        help="For use with continual streaming commands such as tcpdump and ping.")
     group.add_argument("-b", "--bottom", dest="glue_bottom", action="store_true",
                        help="Start this tab at the bottom of the output, similar to follow command, useful with dmesg.")
+    parser.add_argument("-x", "--no-change", dest="no_change", action="store_true",
+                        help="Do not display change history. Can be toggled on/off with x.")
     group.add_argument("command", help="Command to be run, up to 9 commands allowed. Each command is run in a "
                                        "separate tab.\n"
                                        "Note: enclosed in DOUBLE quotes with inside escaped quotes as needed.")
@@ -195,6 +199,7 @@ class Settings(object):
     commands = []
     streaming = []
     glue_bottom = []
+    no_change = []
     commands_count = 0
     interval = 1
     timeout = .4
@@ -262,7 +267,7 @@ class FrameControllers(object):
        """
 
     def frame_controller(self, command, window_id, draw_window_id, event_queue, system_queue, interval,
-                         frame_draw_current, streaming, glue_bottom):
+                         frame_draw_current, streaming, glue_bottom, no_change):
         """ This is the main method that controls storing and drawing frames. First, it spawns a never
             ending generator subprocesses that builds the frames.  The generator sends the data back
             through queues, which is then stored and drawn.
@@ -317,8 +322,7 @@ class FrameControllers(object):
             self.interval = interval
             self.next_playback = 0
             self.playback_speed = 1.0
-            # self.no_history = Settings.no_history
-            # self.no_change = True
+            self.no_change = no_change
             self.next_frame_type = "first"
             self.next_heatmap_type = "first"
 
@@ -344,8 +348,7 @@ class FrameControllers(object):
                 "toggle draw state": self.draw_state_toggle,
                 "toggle recording": self.toggle_recording,
                 "playback speed": self.set_playback_speed,
-                # "toggle history": self.toggle_history,
-                # "toggle change": self.toggle_change,
+                "toggle change": self.toggle_change,
                 "clear history": self.clear_history
             }
 
@@ -389,14 +392,6 @@ class FrameControllers(object):
     def toggle_recording(self):
         self.recording_state = self.event[1]
         self.draw_live_frame()
-
-    # TODO add no_history
-    # def toggle_history(self):
-    #     if self.no_history == False:
-    #         self.no_history = True
-    #     else:
-    #         self.no_history = False
-    #     self.draw_live_frame()
 
     # TODO add no_change
     def toggle_change(self):
@@ -1247,7 +1242,7 @@ class EventController(object):
             curses.KEY_DOWN   : ["one", "window move", "down", "one"],
             ord("j")          : ["one", "window move", "down", "one"],
             4                 : ["one", "window move", "down", "half"],  # ctrl-d
-            336               : ["one", "window move", "down", "half"],  # shift-down
+            336               : ["one", "window move", "down", "page"],  # shift-down
             curses.KEY_NPAGE  : ["one", "window move", "down", "page"],  # page down
             6                 : ["one", "window move", "down", "page"],  # ctrl-f
             ord("G")          : ["one", "window move", "down", "bottom"],
@@ -1257,14 +1252,15 @@ class EventController(object):
             curses.KEY_UP     : ["one", "window move", "up", "one"],
             ord("k")          : ["one", "window move", "up", "one"],
             21                : ["one", "window move", "up", "half"],  # ctrl-u
-            337               : ["one", "window move", "up", "half"],  # shift-up
+            337               : ["one", "window move", "up", "page"],  # shift-up
             curses.KEY_PPAGE  : ["one", "window move", "up", "page"],  # page up
             2                 : ["one", "window move", "up", "page"],  # ctrl-b
             ord("g")          : ["one", "window move", "up", "top"],
             curses.KEY_HOME   : ["one", "window move", "up", "top"],
             567               : ["one", "window move", "up", "top"],  # crtl-up
 
-            ord("X")          : ["one", "clear history"]
+            ord("X")          : ["one", "clear history"],
+            ord("x")          : ["one", "toggle change"]
         }
 
     def keyboard_input(self):
@@ -1430,7 +1426,8 @@ class Main(object):
                     Settings.interval,
                     Main.frame_draw_current,
                     Settings.streaming[x],
-                    Settings.glue_bottom[x]
+                    Settings.glue_bottom[x],
+                    Settings.no_change[x]
                 ))
 
         for x in range(Settings.commands_count):
