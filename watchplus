@@ -87,7 +87,7 @@ def read_args_from_file(arg_file_object):
     with arg_file_object as f:
         for line in f:
             argsv_split.append(shlex.split(line, comments=True))
-    argsv_split = filter(len, argsv_split )
+    argsv_split = list(filter(len, argsv_split))
     return argsv_split
 
 def extract_command_args(argv_split, source):
@@ -147,6 +147,7 @@ Keys controlling playback and viewing:
   Playback controls:
      Space.................................. Play | Pause all tabs at once
      (Play/Pause does not stop recording. Switch tabs and scroll while paused.)
+     r...................................... Start | Stop recording frames and processes
      s a A | d f F.......................... Back | Forward (one|ten|end) frames
      Left/Right Arrow....................... Back | Forward (one|Shft:ten|Alt-Shft:end)
   Viewing controls:
@@ -391,9 +392,19 @@ class FrameControllers(object):
 
     def toggle_recording(self):
         self.recording_state = self.event[1]
+        if self.recording_state == "record":
+            self.draw_state = "play"
+        else:
+            self.draw_state = "pause"
+            if self.streaming:
+                try:
+                    self.generator_event_queue.put(["pause", None, None],
+                                                   timeout=Settings.timeout)
+                except multiprocessing.queues.Full:
+                    pass
+
         self.draw_live_frame()
 
-    # TODO add no_change
     def toggle_change(self):
         if self.no_change == False:
             self.no_change = True
@@ -448,7 +459,7 @@ class FrameControllers(object):
         self.frame_date_time.append(0)
 
     def process_new_frame(self):
-        if self.recording_state == "record":
+        if self.recording_state == "record" or True:
             self.frame_state[self.new] = self.event[1]
             self.frame_length[self.new] = self.event[2]
             time.sleep(.001)
@@ -881,6 +892,7 @@ class FrameControllers(object):
         mode_text = {
             "waiting"      : ["Waiting for first frame", curses.color_pair(31)],
             "paused"       : ["|| PAUSED  ", curses.color_pair(33)],
+            "paused stop"  : ["|| PAUSED  ", curses.color_pair(34)],
             "playback"     : [">> PLAYBACK", curses.color_pair(32)],
             "live play"    : ["<> LIVE    ", curses.color_pair(31)],
             "live stop"    : ["<> LIVE    ", curses.color_pair(34)],
@@ -890,6 +902,8 @@ class FrameControllers(object):
 
         if self.current < 0:
             mode = "waiting"
+        elif self.draw_state == "pause" and self.recording_state == "stop":
+            mode = "paused stop"
         elif self.draw_state == "pause":
             mode = "paused"
         elif self.draw_current < self.current:
@@ -948,21 +962,32 @@ class FrameGenerators(object):
             self.last = 1
             self.frame_type = "first"
             self.stop_time = 0
+            self.recording_state = "record"
 
             while True:
 
                 # frame_controller sends us the parameters for this new frame
                 self.generator_event = self.generator_event_queue.get(block=True)
-                # self.frame_type = normal, full, first,
+                # self.frame_type = normal, full, first, stop, start
                 self.frame_type = self.generator_event[0]
                 self.stop_time = self.generator_event[1]
                 self.precision = self.generator_event[2]
 
+                if self.frame_type == "pause":
+                    self.recording_state = "pause"
+                    if self.streaming:
+                        self.pause_gid(self.command_gid)
+                        continue
                 if self.streaming:
+                    if self.recording_state == "pause":
+                        self.continue_gid(self.command_gid)
+                        self.recording_state = "record"
                     if self.frame_type == "first":
                         self.frame_generator_streaming_first()
                     self.frame_generator_streaming()
                 else:
+                    if self.recording_state == "pause":
+                        self.recording_state = "record"
                     self.frame_generator()
                     self.frame_pre_change()
                     if self.precision is True and self.stop_time < timeit.default_timer():
@@ -978,6 +1003,20 @@ class FrameGenerators(object):
         self.frame_state = "dropped"
         self.frame_length[self.current] = 0
         self.frame_changes = []
+
+    def pause_gid(self, gid):
+        term_sig = 19
+        try:
+            os.killpg(gid, term_sig)
+        except OSError:
+            pass
+
+    def continue_gid(self, gid):
+        term_sig = 18
+        try:
+            os.killpg(gid, term_sig)
+        except OSError:
+            pass
 
     def terminate_gid(self, gid):
         term_sig = 15
@@ -1259,12 +1298,11 @@ class EventController(object):
             curses.KEY_HOME   : ["one", "window move", "up", "top"],
             567               : ["one", "window move", "up", "top"],  # crtl-up
 
-            ord("X")          : ["one", "clear history"],
-            ord("x")          : ["one", "toggle change"]
+            ord("x")          : ["one", "toggle change"],
+            ord("X")          : ["one", "clear history"]
         }
 
     def keyboard_input(self):
-        # TODO fix: r key record on off
         self.last_keystroke = 0
         self.last_keystroke_time = timeit.default_timer()
 

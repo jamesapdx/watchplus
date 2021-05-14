@@ -1,5 +1,5 @@
 "date +%N; date; echo 'This is a test'"
--x "free; echo; free -h; echo; top -b -n 1 -c -p $(pgrep -d',' -f watchplus)"
+-x "free; echo; free -h; echo; top -b -n 1 -c -p $(pgrep -f watchplus | head -n 20 | paste -d, -s -)"
 -b "dmesg" # best to just use dmesg, not dmesg -w (follow). avoid using tail, it's not needed, use -b
 -s "ping 1.1.1.1"      # this is a good example of when to use the -s for streaming
 -x "ping -c1 1.1.1.1"  # and don't use streaming here, because it outputs once and quits (-c1)
