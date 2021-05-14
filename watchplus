@@ -35,8 +35,7 @@ except ImportError:
 try:
     import curses
 except ImportError:
-    print("Unable to load python-curses.  You may need to install the package on the OS (yum install python-curses")
-    print("or zypper in python-curses.  Exiting.")
+    print("Unable to load python-curses. You may need to install the package on the OS (yum install python-curses).")
     sys.exit()
 
 
@@ -67,7 +66,7 @@ def split_command_line_argv():
         elif argv == "--":
             argv_split.append([])
         elif argv.startswith("-") and argv in argv_split[-1]:
-            message = f"duplicate {argv}, perhaps missing '--' separator"
+            message = "duplicate {}, perhaps missing '--' separator".format(argv)
             raise argparse.ArgumentError(None, message)
         else:
             argv_split[-1].append(argv)
@@ -93,13 +92,12 @@ def read_args_from_file(arg_file_object):
 def extract_command_args(argv_split, source):
     command_args = []
     count = 1
-    print(f"Source: {source}")
+    print("Source: {}".format(source))
     for argv in argv_split:
         if argv:
             parser = init_command_parser()
             add_command_args(parser)
-            if len(argv_split) > 1:
-                print(f"assigning command {count} to tab {count}: {argv}")
+            print("assigning command {0} to tab {0}: {1}".format(count, argv))
             command_args.append(parser.parse_args(args=argv))
             count += 1
 
@@ -107,10 +105,10 @@ def extract_command_args(argv_split, source):
 
 def validate_args(system_args, command_args):
     if not command_args:
-        message = f"No commands found."
+        message = "No commands found."
         raise argparse.ArgumentError(None, message)
     elif len(command_args) > 9:
-        message = f"Only 9 commands allowed, {len(args)} provided."
+        message = "Only 9 commands allowed, {} provided.".format(len(args))
         raise argparse.ArgumentError(None, message)
 
     if system_args.interval < .01:
@@ -240,11 +238,13 @@ class Debug():
 
     @classmethod
     def debug_timer(cls, func):
+        # decorate a method with @Debug.debug_timer
         def wrapper_timer(*args, **kwargs):
             start = timeit.default_timer()
             func(*args, **kwargs)
             stop = timeit.default_timer()
             cls.debug_to_file(func.__name__, " time to complete: ", stop - start)
+            # print(func.__name__, " time to complete: ", stop - start)
             return func(*args, **kwargs)
         return wrapper_timer
 
@@ -996,6 +996,9 @@ class FrameGenerators(object):
                 self.put_queues()
 
         except:
+            # continue any paused processes before quiting
+            self.continue_gid(self.command_gid)
+            self.terminate_gid(self.command_gid)
             terminate_processes()
 
     def dropped(self):
@@ -1063,7 +1066,7 @@ class FrameGenerators(object):
             result = ""
         try:
             error = self.proc.stderr.read()
-        except TypeError:
+        except (TypeError, IOError):
             error = ""
 
         try:
