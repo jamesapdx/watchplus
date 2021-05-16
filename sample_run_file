@@ -1,3 +1,4 @@
+-n .5
 -x "free; echo; free -h; echo; top -b -n 1 -c -p $(pgrep -f watchplus | head -n 20 | paste -d, -s -)"
 "date +%N; date; echo 'This is a test'"
 -b "dmesg"               # best to just use dmesg, not dmesg -w (follow). avoid using tail, it's not needed, use -b
