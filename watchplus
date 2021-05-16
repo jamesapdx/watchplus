@@ -183,7 +183,7 @@ def assign_args(system_args, command_args):
     Settings.max_lines = MAX_LINES
 
     for arg in command_args:
-        Settings.commands.append(vars(arg)["\"command\""])
+        Settings.commands.append(vars(arg)["\"cmd\""])
         # Settings.commands.append(arg.command)
         Settings.streaming.append(arg.streaming)
         Settings.glue_bottom.append(arg.glue_bottom)
@@ -199,30 +199,29 @@ def print_help():
 def init_system_parser():
     terminal_width = int(run_linux("tput cols")[0])
     format_func = lambda prog: argparse.RawTextHelpFormatter(prog, width=terminal_width - 2, max_help_position=32)
-    usage = "%(prog)s [-o <f>] | [-f <f>] | [sys options] [cmd options] \"command\" [-- [cmd options] " \
-            "\"command\"]..."
+    usage = "%(prog)s [-o <f>] | [-f <f>] | [sys options] [cmd options] \"cmd\" [-- [cmd options] \"cmd\"]..."
     description = "%(prog)s - a better watch. Featuring pause, rewind and forward, scrolling up and down, line " \
     "wrapping, multiple tabs running indivudal commands simultaneously, and more. Also supports streaming commands " \
     "such as ping and tcpdump."
     epilog = """
 Keys controlling playback and viewing:
   Playback controls:
-     Space.................................. Play | Pause all tabs at once
-     (Play/Pause does not stop recording. Switch tabs and scroll while paused.)
-     r...................................... Start | Stop recording frames and processes
-     s a A | d f F.......................... Back | Forward (one|ten|end) frames
-     Left/Right Arrow....................... Back | Forward (one|Shft:ten|Alt-Shft:end)
+     Space................................ Play | Pause all tabs at once
+     (Play/Pause does not stop recording frames)
+     r.................................... Start | Stop recording frames / processes
+     s a A | d f F........................ Back | Forward (one|ten|end) frames
+     Left/Right Arrow..................... Back | Forward (one|Shft:ten|Alt-Shft:end)
   Viewing controls:
-     1-9.................................... Change tab
-     x...................................... Toggle display of change history on/off
-     k j | Up / Down Arrow.................. Up | Down
-     Ctrl-u | Ctrl-d........................ Half page up | down
-     Page-Up/Ctrl-b | Page-Down/Ctrl-f...... Page up | down
-     g | G.................................. Top | Bottom
+     1-9.................................. Change tab
+     x.................................... Toggle display of change history on/off
+     k j | Up / Down Arrow................ Up | Down
+     Ctrl-u | Ctrl-d...................... Half page up | down
+     Page-Up/Ctrl-b | Page-Down/Ctrl-f.... Page up | down
+     g | G................................ Top | Bottom
   Other controls:
-     crtl-w................................. Write all frames and tabs to ~/[date_time].wp
-                                             Stops recording during write. Load using -o <file>
-     ctrl-c................................. Quit"""
+     crtl-w............................... Write all frames and tabs to ~/[date_time].wp
+                                           Stops recording during write. Load using -o <file>
+     ctrl-c............................... Quit"""
 
     return argparse.ArgumentParser(formatter_class=format_func,
                                    description=description,
@@ -241,11 +240,11 @@ def add_system_args(parser):
 
     group = parser.add_argument_group("Setup File")
     group.add_argument("-f", "--file", dest="arg_file", type=argparse.FileType('r'), metavar="<f>",
-                       help="Read [sys options] [cmd options] \"commands\" from <f>.\n"
-                            "One command per line. Example:\n   -n 1 -p\n   \"dmesg\"\n   -s \"ping -4 1.1.1.1\"")
+                       help="Read [sys options] [cmd options] \"cmd\" from <f>.\n"
+                            "One command per line. Example:\n-n 1 -p\n\"dmesg\"\n-s \"ping -4 1.1.1.1\"")
 
     group = parser.add_argument_group("System options")
-    group.add_argument("-n", "--interval", dest="interval", type=float, metavar="<s>", default=1.0,
+    group.add_argument("-n", dest="interval", type=float, metavar="<s>", default=1.0,
                        help="Interval in <seconds>, minimum .01, default = 1.0.")
     group.add_argument("-p", "--precise", dest="precision", action="store_true",
                        help="Attempt to maintain interval, drop frame if not completed in time.")
@@ -256,14 +255,14 @@ def add_command_args(parser):
     group = parser.add_argument_group("Command options")
     group.add_argument("--", dest="not_used", action="store_true",
                        help="Separator for multiple commands on command line. Not needed for the first one.\n"
-                            "   Example: %(prog)s -n 1 \"dmesg\" -- -s \"ping -4 1.1.1.1\" -- \"echo -n hello\"")
+                            "Example: %(prog)s -n 1 \"dmesg\" -- -s \"ping -4 1.1.1.1\" -- \"echo -n hello\"")
     group.add_argument("-s", "--streaming", dest="streaming", action="store_true",
                        help="For use with continual streaming commands such as tcpdump and ping.")
     group.add_argument("-b", "--bottom", dest="glue_bottom", action="store_true",
                        help="Start this tab at the bottom of the output, similar to follow option.")
     group.add_argument("-x", "--change", dest="no_change", action="store_true",
                        help="Do not display change history. Can be toggled on/off with 'x'.")
-    group.add_argument("\"command\"", help="Command to be run, up to {} commands allowed. Each is run in a "
+    group.add_argument("\"cmd\"", help="Command to be run, up to {} commands allowed. Each is run in a "
                                        "separate tab.\n"
                                        "Note: enclose in DOUBLE quotes with inside escaped quotes as needed.".
                        format(MAX_COMMANDS))
@@ -279,10 +278,19 @@ class Settings(object):
     precision = False
     window_id = []
     draw_window_id = 0
-    python_version = sys.version_info[0]
     run_path = ""
     run_compression = True
     max_lines = 0
+
+    @classmethod
+    def __getstate__(cls):
+        # this is needed to pickle class variabales.  All methods in this class must now start with -
+        return {k: cls.__dict__[k] for k in cls.__dict__ if not k.startswith("_")}
+
+    @classmethod
+    def __setstate__(cls, state):
+        for var_name, value in state.items():
+            setattr(cls, var_name, value)
 
 class Debug():
     """ Place Debug.debug_to_file(message, message, etc.) anywhere message will be output to debug_file.
@@ -1335,13 +1343,12 @@ class EventController(object):
     def __init__(self):
         self.key_mapping()
 
-    def event_controller(self, window, draw_window_id, event_queues, system_queues): #, terminate_queue):
+    def event_controller(self, window, draw_window_id, event_queues, system_queues):
         try:
             self.window = window
             self.draw_window_id = draw_window_id
             self.event_queues = event_queues
             self.system_queues = system_queues
-            # self.terminate_queue = terminate_queue
 
             self.draw_window_ids = range(Settings.commands_count)
             self.start_time = timeit.default_timer()
@@ -1526,10 +1533,12 @@ class EventController(object):
         try:
             if Settings.run_compression:
                 with bz2.BZ2File(run_file, 'wb') as f:
-                    pickle.dump(Settings, f, protocol=2)
+                    # use () on Settings because it has no instances
+                    pickle.dump(Settings(), f, protocol=2)
             else:
                 with open(run_file, 'wb') as f:
-                    pickle.dump(Settings, f, protocol=2)
+                    # use () on Settings because it has no instances
+                    pickle.dump(Settings(), f, protocol=2)
         except FileNotFoundError:
             # TODO add failed message, remove started file
             print("errrr 1")
@@ -1588,23 +1597,6 @@ def run_linux(command, stdout=subprocess.PIPE):
         universal_newlines=True).communicate()
     return result, error
 
-def start_curses():
-    stdscr = curses.initscr()
-    curses.noecho()
-    curses.cbreak()
-    curses.curs_set(0)
-    stdscr.keypad(True)
-    return stdscr
-
-def curses_color_setup():
-    curses.init_pair(1, curses.COLOR_BLACK, curses.COLOR_YELLOW)
-    curses.init_pair(2, curses.COLOR_BLACK, curses.COLOR_RED)
-    curses.init_pair(3, curses.COLOR_BLACK, curses.COLOR_BLUE)
-    curses.init_pair(31, curses.COLOR_BLACK, curses.COLOR_GREEN)
-    curses.init_pair(32, curses.COLOR_BLACK, curses.COLOR_CYAN)
-    curses.init_pair(33, curses.COLOR_BLACK, curses.COLOR_YELLOW)
-    curses.init_pair(34, curses.COLOR_BLACK, curses.COLOR_RED)
-
 def terminate_processes(message=None):
     exception = str(traceback.format_exc())
     terminate_curses()
@@ -1626,67 +1618,122 @@ def terminate_curses():
     curses.curs_set(1)
     curses.endwin()
 
-
 class Main(object):
-
     event_queues = []
     system_queues = []
     frame_draw_current = 0
     process_main = os.getpid()
     process_frame_controllers = []
     process_event_controller = []
+    stdscr = None
 
-    def main_controller(self):
-
-        stdscr = start_curses()
+    @classmethod
+    def start_curses(cls):
+        Main.stdscr = curses.initscr()
+        curses.noecho()
+        curses.cbreak()
+        curses.curs_set(0)
+        Main.stdscr.keypad(True)
         curses.start_color()
-        curses_color_setup()
+        Main.curses_color_setup()
 
+    @classmethod
+    def curses_color_setup(cls):
+        curses.init_pair(1, curses.COLOR_BLACK, curses.COLOR_YELLOW)
+        curses.init_pair(2, curses.COLOR_BLACK, curses.COLOR_RED)
+        curses.init_pair(3, curses.COLOR_BLACK, curses.COLOR_BLUE)
+        curses.init_pair(31, curses.COLOR_BLACK, curses.COLOR_GREEN)
+        curses.init_pair(32, curses.COLOR_BLACK, curses.COLOR_CYAN)
+        curses.init_pair(33, curses.COLOR_BLACK, curses.COLOR_YELLOW)
+        curses.init_pair(34, curses.COLOR_BLACK, curses.COLOR_RED)
+
+    @classmethod
+    def init_frame_controller(cls, frame_controller_seed=None):
         Main.frame_draw_current = multiprocessing.Value("i", 0)
         Main.system_queue = multiprocessing.Queue(0)
-        frame_controller_seed = FrameControllers()
-        saved = False
-        for x in range(Settings.commands_count):
-            Settings.window_id.append(x)
+        if frame_controller_seed:
+            Main.frame_controller_seed = frame_controller_seed
+        else:
+            Main.frame_controller_seed = FrameControllers()
+
+    @classmethod
+    def spawn_frame_controllers(cls):
+            for count in range(Settings.commands_count):
+                cls.spawn_frame_controller(count)
+
+    @classmethod
+    def spawn_frame_controller(cls, num):
+            Settings.window_id.append(num)
             Main.event_queues.append("")
             Main.system_queues.append("")
             Main.process_frame_controllers.append("")
 
-            Main.event_queues[x] = multiprocessing.Queue(0)
-            Main.system_queues[x] = multiprocessing.Queue(0)
-            Main.process_frame_controllers[x] = multiprocessing.Process(
-                target=frame_controller_seed.frame_controller,
+            Main.event_queues[num] = multiprocessing.Queue(0)
+            Main.system_queues[num] = multiprocessing.Queue(0)
+            Main.process_frame_controllers[num] = multiprocessing.Process(
+                target=Main.frame_controller_seed.frame_controller,
                 args=(
-                Settings.commands[x],
-                Settings.window_id[x],
+                Settings.commands[num],
+                Settings.window_id[num],
                 Settings.draw_window_id,
-                Main.event_queues[x],
-                Main.system_queues[x],
+                Main.event_queues[num],
+                Main.system_queues[num],
                 Settings.interval,
                 Main.frame_draw_current,
-                Settings.streaming[x],
-                Settings.glue_bottom[x],
-                Settings.no_change[x],
-                saved
+                Settings.streaming[num],
+                Settings.glue_bottom[num],
+                Settings.no_change[num],
+                False # !!!!
             ))
 
+    @classmethod
+    def start_frame_controllers(cls):
         for x in range(Settings.commands_count):
             Main.process_frame_controllers[x].start()
 
-        # Main.terminate_queue = multiprocessing.Queue(0)
+    @classmethod
+    def main_controller(cls):
         event_controller_seed = EventController()
         Main.process_event_controller = multiprocessing.Process(
             target=event_controller_seed.event_controller,
             args=(
-                stdscr,
+                Main.stdscr,
                 Settings.draw_window_id,
                 Main.event_queues,
-                Main.system_queues,
-                # Main.terminate_queue
+                Main.system_queues
             ))
         Main.process_event_controller.start()
         Main.process_event_controller.join()
 
+    @classmethod
+    def load_saved_run(cls):
+        if Settings.run_compression:
+            with bz2.BZ2File(f, 'rb') as f:
+                # load Settings first
+                pickle.load(f, fix_imports=True)
+
+                # load a Frame
+                frame_controller = pickle.load(f, fix_imports=True)
+                cls.spawn_frame_controllers()
+                del frame_controller
+
+        else:
+            with open(f, 'rb') as f:
+                pickle.load(f, fix_imports=True)
+
+
+#!!!!!!!!!!!!!!!!
+        saved = False
+
+        # with bz2.BZ2File(f, 'rb') as ff:
+        #     # with open(f, 'rb') as ff:
+        #     x = pickle.load(ff)
+        #     for i in range(x):
+        #         a = pickle.load(ff)
+        #         p.append(multiprocessing.Process(target=a.p))
+        #         del a
+        #         time.sleep(.8)
+        #
 
 if __name__ == "__main__":
 
@@ -1698,6 +1745,10 @@ if __name__ == "__main__":
     try:
         print("Starting...")
         main = Main()
+        main.start_curses()
+        main.init_frame_controller()
+        main.spawn_frame_controllers()
+        main.start_frame_controllers()
         main.main_controller()
     except:
         terminate_processes()
