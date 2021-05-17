@@ -60,7 +60,9 @@ def process_argparse():
     cl_other_args, cl_system_args = extract_system_args(cl_argv_split)
 
     if cl_system_args.open:
-        pass
+        Settings.saved = True
+        Settings.load_run_file = cl_system_args.open.name
+        return
 
     # process -f file args
     f_command_args = []
@@ -82,8 +84,6 @@ def process_argparse():
 
     validate_args(system_args, command_args)
     assign_args(system_args, command_args)
-
-    return system_args, command_args
 
 def merge_namespace(first, precedence):
     new = vars(first)
@@ -281,11 +281,13 @@ class Settings(object):
     run_path = ""
     run_compression = True
     max_lines = 0
+    saved = False
+    load_run_file = ""
 
     @classmethod
     def __getstate__(cls):
-        # this is needed to pickle class variabales.  All methods in this class must now start with -
-        return {k: cls.__dict__[k] for k in cls.__dict__ if not k.startswith("_")}
+        # this is needed to pickle class variables.  All methods in this class must now start with _
+        return {var_name: cls.__dict__[var_name] for var_name in cls.__dict__ if not var_name.startswith("_")}
 
     @classmethod
     def __setstate__(cls, state):
@@ -367,7 +369,7 @@ class FrameControllers(object):
         "current",
         "new",
         "streaming"]
-        return {key: self.__dict__[key] for key in self.__dict__ if key in includes}
+        return {var_name: self.__dict__[var_name] for var_name in self.__dict__ if var_name in includes}
 
     def __setstate__(self, state):
         self.__dict__.update(state)
@@ -387,8 +389,19 @@ class FrameControllers(object):
             self.current = - 1
             self.new = -1
 
+            self.draw_current = -2
+            self.draw_state = "play"
+            self.recording_state = "record"
+
+    def saved_init(self):
+        self.draw_current = len(self.frame_state) - 1
+        self.current = self.draw_current
+        self.frame_draw_current.value = self.draw_current
+        self.draw_state = "pause"
+        self.recording_state = "stop"
+
     def frame_controller(self, command, window_id, draw_window_id, event_queue, system_queue, interval,
-                         frame_draw_current, streaming, glue_bottom, no_change, saved):
+                         frame_draw_current, streaming, glue_bottom, no_change):
         """ This is the main method that controls storing and drawing frames. First, it spawns a never
             ending generator subprocesses that builds the frames.  The generator sends the data back
             through queues, which is then stored and drawn.
@@ -397,14 +410,17 @@ class FrameControllers(object):
             """
         try:
             self.command = command
-
+            self.window_id = window_id
+            self.draw_window_id = draw_window_id
             self.event_queue = event_queue
             self.system_queue = system_queue
+            self.interval = interval
             self.frame_draw_current = frame_draw_current
-            self.event = None
-            self.saved = saved
             self.streaming = streaming
+            self.glued_to_bottom = True if streaming or glue_bottom else False
+            self.no_change = no_change
 
+            self.event = None
             printable = string.digits + string.punctuation + string.ascii_letters + " "
             self.command_printable = "".join([x for x in self.command if x in printable])
             self.max_line_length = Settings.max_lines
@@ -416,23 +432,15 @@ class FrameControllers(object):
             self.draw_width_adder = 0
             self.terminal_draw_height = 0
             self.terminal_draw_width = 0
-            self.draw_current = -2
-            self.draw_state = "play"
-            self.recording_state = "record"
-            self.window_id = window_id
-            self.draw_window_id = draw_window_id
             self.window = None
             self.terminal_height = 0
             self.terminal_width = 0
             self.y_top_line = 0
             self.y_top_sub = 0
             self.draw_move = 0
-            self.glued_to_bottom = True if streaming or glue_bottom else False
             self.resize = 0
-            self.interval = interval
             self.next_playback = 0
             self.playback_speed = 1.0
-            self.no_change = no_change
             self.next_frame_type = "first"
             self.next_heatmap_type = "first"
 
@@ -453,15 +461,17 @@ class FrameControllers(object):
                 "save": self.write_to_file
             }
 
-            if not self.saved:
+            if Settings.saved:
+                self.saved_init()
+            else:
                 self.new_init()
+                # start generator
+                self.process_generator = None
+                self.initialize_generator_childprocess()
 
+            # get windows ready
             self.draw_initialize_window()
             self.get_terminal_size()
-
-            # start generator
-            self.process_generator = None
-            self.initialize_generator_childprocess()
 
             # tell event controller we are ready to go
             self.system_queue.put(1)
@@ -471,7 +481,7 @@ class FrameControllers(object):
             while True:
                 # self.event expects a list, sent by another process
                 try:
-                    timeout = min(.02, Settings.interval * .2)
+                    timeout = min(.02, self.interval * .2)
                     self.event = self.event_queue.get(block=True, timeout=timeout)
 
                 except multiprocessing.queues.Empty:
@@ -489,20 +499,19 @@ class FrameControllers(object):
             terminate_processes()
 
     def initialize_generator_childprocess(self):
-        if not self.saved:
-            self.generator_seed = FrameGenerators()
-            self.generator_frame_queue = multiprocessing.Queue(0)
-            self.generator_event_queue = multiprocessing.Queue(0)
-            self.process_generator = multiprocessing.Process(
-                target=self.generator_seed.generator_controller,
-                args=(
-                    self.command,
-                    self.generator_frame_queue,
-                    self.generator_event_queue,
-                    self.event_queue,
-                    self.streaming
-                ))
-            self.process_generator.start()
+        self.generator_seed = FrameGenerators()
+        self.generator_frame_queue = multiprocessing.Queue(0)
+        self.generator_event_queue = multiprocessing.Queue(0)
+        self.process_generator = multiprocessing.Process(
+            target=self.generator_seed.generator_controller,
+            args=(
+                self.command,
+                self.generator_frame_queue,
+                self.generator_event_queue,
+                self.event_queue,
+                self.streaming
+            ))
+        self.process_generator.start()
 
     def write_to_file(self):
         run_file = self.event[1]
@@ -688,6 +697,8 @@ class FrameControllers(object):
         if self.event[2] == "new":
             self.draw_current = self.frame_draw_current.value
             self.draw_live_frame()
+        else:
+            self.frame_draw_current.value = self.draw_current
 
     def playback_interval(self):
         if self.window_id != self.draw_window_id:
@@ -1343,7 +1354,7 @@ class EventController(object):
     def __init__(self):
         self.key_mapping()
 
-    def event_controller(self, window, draw_window_id, event_queues, system_queues):
+    def event_controller(self, window, draw_window_id, event_queues, system_queues, frame_count):
         try:
             self.window = window
             self.draw_window_id = draw_window_id
@@ -1352,13 +1363,15 @@ class EventController(object):
 
             self.draw_window_ids = range(Settings.commands_count)
             self.start_time = timeit.default_timer()
-            self.interval = Settings.interval
             self.precision = Settings.precision
             self.new_stop_time = 0
             self.new_start_date_time = 0
             self.done_count = 0
-            self.event_frame_count = 0
-            self.recording_state = "record"
+            self.event_frame_count = frame_count
+            if Settings.saved:
+                self.recording_state = "stop"
+            else:
+                self.recording_state = "record"
 
             while True:
                 step = min(.02, Settings.interval * .2)
@@ -1367,7 +1380,7 @@ class EventController(object):
                 if timeit.default_timer() > self.new_stop_time and self.recording_state == "record":
                     if self.done_count >= len(self.draw_window_ids):
                         self.done_count = 0
-                        self.new_stop_time = self.interval + timeit.default_timer()
+                        self.new_stop_time = Settings.interval + timeit.default_timer()
                         self.new_start_date_time = datetime.datetime.now()
 
                         for window_id in self.draw_window_ids:
@@ -1449,15 +1462,14 @@ class EventController(object):
 
         if raw_keystroke != -1:
             # to see keystroke codes uncomment this line and tail -f debug on the commond line
-            Debug.debug_to_file("raw: " + str(raw_keystroke)  )
+            # Debug.debug_to_file("raw: " + str(raw_keystroke)  )
             pass
 
         if raw_keystroke == curses.KEY_RESIZE:
             self.event_queues[self.draw_window_id].put(("refresh",))
 
         if raw_keystroke >= 48 and raw_keystroke <= 57:
-            # TODO fix: double key doesn't work now
-            # TODO enhance: name the numbers
+            # TODO fix: double key doesn't work
             # number presses, used to change command views
             if self.last_keystroke >= 48 and self.last_keystroke <= 57 and keystroke_time_delta < .6 and len(self.draw_window_ids) >= 9:
                 new_win = ((self.last_keystroke - 48) * 10) + (raw_keystroke - 48) - 1
@@ -1471,7 +1483,7 @@ class EventController(object):
                 except multiprocessing.queues.Full:
                     pass
 
-        if raw_keystroke == ord("r"):
+        if raw_keystroke == ord("r") and not Settings.saved:
             if self.recording_state == "record":
                 self.recording_state = "stop"
                 self.key_map[ord("r")] = ["all", "toggle recording", "stop"]
@@ -1541,11 +1553,9 @@ class EventController(object):
                     pickle.dump(Settings(), f, protocol=2)
         except FileNotFoundError:
             # TODO add failed message, remove started file
-            print("errrr 1")
             return
         except:
             # TODO add failed message
-            print("errrr 2")
             return
 
         # tell each tab to write
@@ -1563,8 +1573,6 @@ class EventController(object):
                     pass
             if get != 2:
                 # TODO add failed message
-                print("errrr 3")
-                print(i)
                 return
 
         # turn recording back on
@@ -1621,7 +1629,8 @@ def terminate_curses():
 class Main(object):
     event_queues = []
     system_queues = []
-    frame_draw_current = 0
+    frame_count = 0
+    frame_draw_current = multiprocessing.Value("i", 0)
     process_main = os.getpid()
     process_frame_controllers = []
     process_event_controller = []
@@ -1648,30 +1657,18 @@ class Main(object):
         curses.init_pair(34, curses.COLOR_BLACK, curses.COLOR_RED)
 
     @classmethod
-    def init_frame_controller(cls, frame_controller_seed=None):
-        Main.frame_draw_current = multiprocessing.Value("i", 0)
-        Main.system_queue = multiprocessing.Queue(0)
-        if frame_controller_seed:
-            Main.frame_controller_seed = frame_controller_seed
-        else:
-            Main.frame_controller_seed = FrameControllers()
-
-    @classmethod
     def spawn_frame_controllers(cls):
-            for count in range(Settings.commands_count):
-                cls.spawn_frame_controller(count)
+        frame_controller_seed = FrameControllers()
+        for count in range(Settings.commands_count):
+                cls.spawn_frame_controller(count, frame_controller_seed)
 
     @classmethod
-    def spawn_frame_controller(cls, num):
+    def spawn_frame_controller(cls, num, frame_controller_seed):
             Settings.window_id.append(num)
-            Main.event_queues.append("")
-            Main.system_queues.append("")
-            Main.process_frame_controllers.append("")
-
-            Main.event_queues[num] = multiprocessing.Queue(0)
-            Main.system_queues[num] = multiprocessing.Queue(0)
-            Main.process_frame_controllers[num] = multiprocessing.Process(
-                target=Main.frame_controller_seed.frame_controller,
+            Main.event_queues.append(multiprocessing.Queue(0))
+            Main.system_queues.append(multiprocessing.Queue(0))
+            Main.process_frame_controllers.append(multiprocessing.Process(
+                target=frame_controller_seed.frame_controller,
                 args=(
                 Settings.commands[num],
                 Settings.window_id[num],
@@ -1682,9 +1679,8 @@ class Main(object):
                 Main.frame_draw_current,
                 Settings.streaming[num],
                 Settings.glue_bottom[num],
-                Settings.no_change[num],
-                False # !!!!
-            ))
+                Settings.no_change[num]
+            )))
 
     @classmethod
     def start_frame_controllers(cls):
@@ -1700,40 +1696,35 @@ class Main(object):
                 Main.stdscr,
                 Settings.draw_window_id,
                 Main.event_queues,
-                Main.system_queues
+                Main.system_queues,
+                Main.frame_count
             ))
         Main.process_event_controller.start()
         Main.process_event_controller.join()
 
     @classmethod
     def load_saved_run(cls):
-        if Settings.run_compression:
-            with bz2.BZ2File(f, 'rb') as f:
-                # load Settings first
-                pickle.load(f, fix_imports=True)
+        print(Settings.load_run_file)
+        try:
+            if Settings.run_compression:
+                with bz2.BZ2File(Settings.load_run_file, 'rb') as f:
+                    # load Settings first
+                    pickle.load(f, fix_imports=True)
+                    Settings.saved = True
 
-                # load a Frame
-                frame_controller = pickle.load(f, fix_imports=True)
-                cls.spawn_frame_controllers()
-                del frame_controller
-
-        else:
-            with open(f, 'rb') as f:
-                pickle.load(f, fix_imports=True)
-
-
-#!!!!!!!!!!!!!!!!
-        saved = False
-
-        # with bz2.BZ2File(f, 'rb') as ff:
-        #     # with open(f, 'rb') as ff:
-        #     x = pickle.load(ff)
-        #     for i in range(x):
-        #         a = pickle.load(ff)
-        #         p.append(multiprocessing.Process(target=a.p))
-        #         del a
-        #         time.sleep(.8)
-        #
+                    # load frames
+                    for count in range(Settings.commands_count):
+                        frame_controller = pickle.load(f, fix_imports=True)
+                        cls.frame_count = len(frame_controller.frame_state) - 1
+                        cls.spawn_frame_controller(count, frame_controller)
+                        del frame_controller
+            else:
+                with open(f, 'rb') as f:
+                    pickle.load(f, fix_imports=True)
+        except EOFError:
+            # not enough items to read in
+            # make a better error message
+            raise
 
 if __name__ == "__main__":
 
@@ -1743,11 +1734,12 @@ if __name__ == "__main__":
     process_argparse()
 
     try:
-        print("Starting...")
         main = Main()
         main.start_curses()
-        main.init_frame_controller()
-        main.spawn_frame_controllers()
+        if Settings.saved:
+            main.load_saved_run()
+        else:
+            main.spawn_frame_controllers()
         main.start_frame_controllers()
         main.main_controller()
     except:
