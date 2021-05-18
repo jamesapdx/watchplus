@@ -49,46 +49,50 @@ except ImportError:
 #   Arguments and flags
 # ======================================================================================================================
 
-MAX_COMMANDS = 9
+MAX_COMMANDS = 20
 MAX_LINES = 999999
 
 def process_argparse():
     # first split all command line args based on -- only
     cl_argv_split = split_command_line_argv()
 
-    # grab system args and all other args from command line
-    cl_other_args, cl_system_args = extract_system_args(cl_argv_split)
+    # get command line commands
+    source = "command line"
+    cl_system_args, cl_command_args = extract_system_command_args(cl_argv_split, source)
 
     if cl_system_args.open:
-        Settings.saved = True
+        Settings.load_saved_run = True
         Settings.load_run_file = cl_system_args.open.name
         return
 
     # process -f file args
+    f_system_args = []
     f_command_args = []
     if cl_system_args.arg_file:
+        f_argv_split = read_file_args(cl_system_args.arg_file)
+
         # read command args and more system args from file if exists
-        f_argv_split = split_all_file_args(cl_system_args.arg_file)
+        source = cl_system_args.arg_file.name
+        f_system_args, f_command_args = extract_system_command_args(f_argv_split, source)
 
-        print_source = cl_system_args.arg_file.name
-        f_system_args, f_command_args = extract_command_args(f_argv_split, print_source)
-
-    # add command line commands, ignore more_system_args, don't add more than MAX_COMMANDS
-    print_source = "command line"
-    _, cl_command_args = extract_command_args(cl_other_args, print_source, existing=f_command_args)
-
-    # system args from command line take precedence over file system args
+    # command line system args take precedence over file system args
     system_args = merge_namespace(f_system_args, cl_system_args)
-    # file commands take precedence over command line commands
+
+    # file commands take precedence over command line commands, too confusing otherwise
     command_args = f_command_args + cl_command_args
 
-    validate_args(system_args, command_args)
-    assign_args(system_args, command_args)
+    commands_assigned, commands_unassigned = assign_commands_to_tabs(command_args)
+
+    print_commands(commands_assigned, commands_unassigned)
+    validate_args(system_args, commands_assigned)
+    store_args_in_settings(system_args, commands_assigned, commands_unassigned)
 
 def merge_namespace(first, precedence):
-    new = vars(first)
-    new.update(vars(precedence))
-    return argparse.Namespace(**new)
+    if first and precedence:
+        new = vars(first)
+        new.update(vars(precedence))
+        return argparse.Namespace(**new)
+    return first if first else precedence
 
 def split_command_line_argv():
     argv_split = [[]]
@@ -107,21 +111,37 @@ def split_command_line_argv():
 
     return argv_split
 
-def extract_system_args(argv_split):
+def extract_system_command_args(argv_split, source):
+    """
+    :return: system_args = argparse.Namespace
+             command_args = [argparse.Namespace,...]
+    """
+    system_args = None
+    command_args = []
+
+    # strip out system options as an argparse.Namespace
     parser = init_system_parser()
     add_system_args(parser)
-    other_args = []
     namespace = None
     for count, argv in enumerate(argv_split):
-        # use namespace=namespace to not wipe out previous discoveries
-        args = parser.parse_known_args(args=argv, namespace=namespace)
-        system_args = args[0]
-        namespace = args[0]
-        if args[1]:
-            other_args.append(args[1])
-    return other_args, system_args
+        arg = parser.parse_known_args(args=argv, namespace=namespace)
+        system_args = arg[0]
+        # namspace is used to preserve "running total" of sys args
+        namespace = system_args
+        argv_split[count] = arg[1]
 
-def split_all_file_args(arg_file_object):
+    # convert list of command flags to list of argparse.Namespace
+    for argv in argv_split:
+        if argv:
+            parser = init_command_parser()
+            add_command_args(parser)
+            command_args.append(parser.parse_args(args=argv))
+            command_args[-1].source = source
+            command_args[-1].original = argv
+
+    return system_args, command_args
+
+def read_file_args(arg_file_object):
     argv_split = []
     with arg_file_object as f:
         for line in f:
@@ -129,52 +149,61 @@ def split_all_file_args(arg_file_object):
     argv_split = list(filter(len, argv_split))
     return argv_split
 
-def extract_command_args(argv_split, print_source, existing=[]):
-    start = len(existing)
-    command_args = []
-    more_system_args = []
+def assign_commands_to_tabs(command_args):
+    """
+    :return: [argparse.Namespace,...] note: len = 40, can contain None values throughout because of
+            manual assignment flag
+    """
+    tab_text = {1: '1', 2: '2', 3: '3', 4: '4', 5: '5', 6: '6', 7: '7', 8: '8', 9: '9', 10: '0',
+                11: 'shift-1', 12: 'shift-2', 13: 'shift-3', 14: 'shift-4', 15: 'shift-5', 16: 'shift-6',
+                17: 'shift-7', 18: 'shift-8', 19: 'shift-9', 20: 'shift-0'}
+    commands_assigned = [None] * MAX_COMMANDS
+    commands_temp = []
+    commands_unassigned = []
 
-    # strip out system options
-    parser = init_system_parser()
-    add_system_args(parser)
-    namespace = None
-    for count, argv in enumerate(argv_split):
-        arg = parser.parse_known_args(args=argv, namespace=namespace)
-        more_system_args = arg[0]
-        namespace = more_system_args
-        argv_split[count] = arg[1]
-    argv_split = list(filter(len, argv_split))
+    # first assign to tab commands with -t option and put all remaining in commands_temp
+    for command in command_args:
+        tab = command.tab
+        if tab and tab > 0 and tab <= MAX_COMMANDS:
+            if not commands_assigned[tab - 1]:
+                commands_assigned[tab - 1] = command
+                continue
+        commands_temp.append(command)
 
-    # get commands and print
-    print_commands = []
-    for count, argv in enumerate(argv_split):
-        parser = init_command_parser()
-        add_command_args(parser)
-        if count + start + 1 > MAX_COMMANDS:
-            print_commands.append("exceeding {} commands, not using: {}".format(MAX_COMMANDS, argv))
+    for command in commands_temp:
+        for count, tab in enumerate(commands_assigned):
+            if not tab:
+                commands_assigned[count] = command
+                break
         else:
-            print_commands.append("assigning command {0} to tab {0}: {1}".format(count + start + 1, argv))
-            command_args.append(parser.parse_args(args=argv))
+            commands_unassigned.append(command)
 
-    if print_commands:
-        print("Source: {}".format(print_source))
-    for print_command in print_commands:
-        print(print_command)
+    for count, command in enumerate(commands_assigned):
+        if command:
+            p = "tab {:8}: {} from {}"
+            commands_assigned[count].print = p.format(tab_text[count + 1], command.original, command.source)
+    for count, command in enumerate(commands_unassigned):
+        p = "exceeded {} cmds, not using {} from {}"
+        commands_unassigned[count].print = p.format(MAX_COMMANDS, command.original, command.source)
 
-    return more_system_args, command_args
+    return commands_assigned, commands_unassigned
 
-def validate_args(system_args, command_args):
-    if not command_args:
+def print_commands(commands_assigned, commands_unassigned):
+    for command in commands_assigned:
+        if command:
+            print(command.print)
+    for command in commands_unassigned:
+        print(command.print)
+
+def validate_args(system_args, commands_assigned):
+    if not [c for c in commands_assigned if c]:
         message = "No commands found."
-        raise argparse.ArgumentError(None, message)
-    elif len(command_args) > MAX_COMMANDS:
-        message = "Only {} commands allowed, {} provided.".format(MAX_COMMANDS, len(command_args))
         raise argparse.ArgumentError(None, message)
 
     if system_args.interval < .01:
         raise argparse.ArgumentError(None, "Interval cannot be less than .01.")
 
-def assign_args(system_args, command_args):
+def store_args_in_settings(system_args, commands_assigned, commands_unassigned):
     Settings.interval = system_args.interval
     Settings.timeout = min(.1, Settings.interval * .4)
     Settings.precision = system_args.precision
@@ -182,13 +211,17 @@ def assign_args(system_args, command_args):
     Settings.run_compression = True
     Settings.max_lines = MAX_LINES
 
-    for arg in command_args:
-        Settings.commands.append(vars(arg)["\"cmd\""])
-        # Settings.commands.append(arg.command)
-        Settings.streaming.append(arg.streaming)
-        Settings.glue_bottom.append(arg.glue_bottom)
-        Settings.no_change.append(arg.no_change)
-    Settings.commands_count = len(Settings.commands)
+    for count, command in enumerate(commands_assigned):
+        if command:
+            Settings.commands[count] = vars(command)["\"cmd\""]
+            Settings.streaming[count] = command.streaming
+            Settings.glue_bottom[count] = command.glue_bottom
+            Settings.no_change[count] = command.no_change
+            Settings.window_ids.append(count)
+    Settings.start_window_id = Settings.window_ids[0]
+
+    Settings.commands_assigned = commands_assigned
+    Settings.commands_unassigned = commands_unassigned
 
 def print_help():
     parser = init_system_parser()
@@ -199,29 +232,32 @@ def print_help():
 def init_system_parser():
     terminal_width = int(run_linux("tput cols")[0])
     format_func = lambda prog: argparse.RawTextHelpFormatter(prog, width=terminal_width - 2, max_help_position=32)
-    usage = "%(prog)s [-o <f>] | [-f <f>] | [sys options] [cmd options] \"cmd\" [-- [cmd options] \"cmd\"]..."
+    usage = "%(prog)s [-o <f>] | [-f <f>] | [sys options] [cmd options] \"cmd\" [ -- [cmd options] \"cmd\" ]..."
     description = "%(prog)s - a better watch. Featuring pause, rewind and forward, scrolling up and down, line " \
-    "wrapping, multiple tabs running indivudal commands simultaneously, and more. Also supports streaming commands " \
-    "such as ping and tcpdump."
+    "wrapping, multiple tabs running indivudal commands simultaneously, and saving runs. Also supports " \
+    "streaming commands such as ping and tcpdump."
     epilog = """
 Keys controlling playback and viewing:
-  Playback controls:
-     Space................................ Play | Pause all tabs at once
-     (Play/Pause does not stop recording frames)
-     r.................................... Start | Stop recording frames / processes
-     s a A | d f F........................ Back | Forward (one|ten|end) frames
-     Left/Right Arrow..................... Back | Forward (one|Shft:ten|Alt-Shft:end)
+  Playback controls (all tabs at once):
+     Space ............................... Play | Pause  (does not stop recording)
+     r ................................... Start | Stop recording Frames
+     A a s | d f F ....................... 100 | 10 | 1 << >> 1 | 10 | 100  Frames
+     Left | Right Arrows (ctrl, shift) ... 100 | 10 | 1 << >> 1 | 10 | 100  Frames
+     w | e ............................... First << >> Last  Frames
   Viewing controls:
-     1-9.................................. Change tab
-     x.................................... Toggle display of change history on/off
-     k j | Up / Down Arrow................ Up | Down
-     Ctrl-u | Ctrl-d...................... Half page up | down
-     Page-Up/Ctrl-b | Page-Down/Ctrl-f.... Page up | down
-     g | G................................ Top | Bottom
+     1-0, shift 1-0 ...................... Change tab
+                                           1-0 = tab 1-10, shft-1-0 = tab 11-20
+     x ................................... Toggle change history display on/off
+     k j ................................. Up | Down
+     Up | Down Arrows .................... Up | Down
+     Ctrl-u | Ctrl-d ..................... Half page up | down
+     Ctrl-b | Ctrl-f ..................... Page up | down
+     Page-Up | Page-Down ................. Page up | down
+     g | G ............................... Top | Bottom
   Other controls:
-     crtl-w............................... Write all frames and tabs to ~/[date_time].wp
-                                           Stops recording during write. Load using -o <file>
-     ctrl-c............................... Quit"""
+     crtl-w .............................. Write frames and tabs to ~/[date_time].wp
+                                           Stops recording during write. Load: -o <f>
+     ctrl-c .............................. Quit"""
 
     return argparse.ArgumentParser(formatter_class=format_func,
                                    description=description,
@@ -235,16 +271,16 @@ def init_command_parser():
 def add_system_args(parser):
     group = parser.add_argument_group("Run file")
     group.add_argument("-o", "--open", dest="open", type=argparse.FileType('r'), metavar="<f>",
-                       help="Load %(prog)s run <file> that was saved from a past run.\n"
+                       help="Load %(prog)s run file <f> that was saved from a past run.\n"
                             "Use ctrl-w after a run to save to a run file.")
 
     group = parser.add_argument_group("Setup File")
     group.add_argument("-f", "--file", dest="arg_file", type=argparse.FileType('r'), metavar="<f>",
-                       help="Read [sys options] [cmd options] \"cmd\" from <f>.\n"
+                       help="Read [sys options] [cmd options] \"cmd\" from file <f>.\n"
                             "One command per line. Example:\n-n 1 -p\n\"dmesg\"\n-s \"ping -4 1.1.1.1\"")
 
-    group = parser.add_argument_group("System options")
-    group.add_argument("-n", dest="interval", type=float, metavar="<s>", default=1.0,
+    group = parser.add_argument_group("System options (applies to all tabs)")
+    group.add_argument("-n", "--interval", dest="interval", type=float, metavar="<s>", default=1.0,
                        help="Interval in <seconds>, minimum .01, default = 1.0.")
     group.add_argument("-p", "--precise", dest="precision", action="store_true",
                        help="Attempt to maintain interval, drop frame if not completed in time.")
@@ -253,35 +289,37 @@ def add_system_args(parser):
 
 def add_command_args(parser):
     group = parser.add_argument_group("Command options")
-    group.add_argument("--", dest="not_used", action="store_true",
-                       help="Separator for multiple commands on command line. Not needed for the first one.\n"
-                            "Example: %(prog)s -n 1 \"dmesg\" -- -s \"ping -4 1.1.1.1\" -- \"echo -n hello\"")
+    group.add_argument("--", dest="separator", action="store_true",
+                       help="Separator for commands on command line. Not needed for the first one.\n"
+                            "Example: %(prog)s -n 1 \"dmesg\" -- -s \"ping -4 1.1.1.1\" -- \"nstat\"")
     group.add_argument("-s", "--streaming", dest="streaming", action="store_true",
                        help="For use with continual streaming commands such as tcpdump and ping.")
     group.add_argument("-b", "--bottom", dest="glue_bottom", action="store_true",
                        help="Start this tab at the bottom of the output, similar to follow option.")
     group.add_argument("-x", "--change", dest="no_change", action="store_true",
                        help="Do not display change history. Can be toggled on/off with 'x'.")
-    group.add_argument("\"cmd\"", help="Command to be run, up to {} commands allowed. Each is run in a "
-                                       "separate tab.\n"
+    group.add_argument("-t", "--tab", dest="tab", type=int, metavar="<t>",
+                       help="Assign this command to tab <t> if possible, 1-{}.\n".format(MAX_COMMANDS))
+    group.add_argument("\"cmd\"", help="Command to be run, up to {} allowed, each in in a separate tab.\n"
                                        "Note: enclose in DOUBLE quotes with inside escaped quotes as needed.".
                        format(MAX_COMMANDS))
 
 class Settings(object):
-    commands = []
-    streaming = []
-    glue_bottom = []
-    no_change = []
-    commands_count = 0
+    commands = [None] * MAX_COMMANDS
+    commands_assigned = [None]
+    commands_unassigned = [None]
+    streaming = [None] * MAX_COMMANDS
+    glue_bottom = [None] * MAX_COMMANDS
+    no_change = [None] * MAX_COMMANDS
+    window_ids = []
     interval = 1
     timeout = .4
     precision = False
-    window_id = []
-    draw_window_id = 0
+    start_window_id = 0
     run_path = ""
     run_compression = True
-    max_lines = 0
-    saved = False
+    max_lines = MAX_LINES
+    load_saved_run = False
     load_run_file = ""
 
     @classmethod
@@ -400,7 +438,7 @@ class FrameControllers(object):
         self.draw_state = "pause"
         self.recording_state = "stop"
 
-    def frame_controller(self, command, window_id, draw_window_id, event_queue, system_queue, interval,
+    def frame_controller(self, command, window_id, start_window_id, event_queue, system_queue, interval,
                          frame_draw_current, streaming, glue_bottom, no_change):
         """ This is the main method that controls storing and drawing frames. First, it spawns a never
             ending generator subprocesses that builds the frames.  The generator sends the data back
@@ -411,7 +449,7 @@ class FrameControllers(object):
         try:
             self.command = command
             self.window_id = window_id
-            self.draw_window_id = draw_window_id
+            self.draw_window_id = start_window_id
             self.event_queue = event_queue
             self.system_queue = system_queue
             self.interval = interval
@@ -461,7 +499,7 @@ class FrameControllers(object):
                 "save": self.write_to_file
             }
 
-            if Settings.saved:
+            if Settings.load_saved_run:
                 self.saved_init()
             else:
                 self.new_init()
@@ -1076,6 +1114,17 @@ class FrameControllers(object):
             self.command_printable)
         return status_bar, mode_text[mode][1]
 
+class FrameControllerNoChange(FrameControllers):
+    """TODO future home of not recording changes for performance"""
+    pass
+
+class FrameControllerSavedRun(FrameControllers):
+    """TODO future home of saved runs"""
+    pass
+
+class FrameControllerSavedRunNoChane(FrameControllerSavedRun, FrameControllerNoChange):
+    """TODO future home of saved runs and no changes"""
+    pass
 
 # ======================================================================================================================
 #   Frame Generator, running, reading, storing a command
@@ -1354,21 +1403,21 @@ class EventController(object):
     def __init__(self):
         self.key_mapping()
 
-    def event_controller(self, window, draw_window_id, event_queues, system_queues, frame_count):
+    def event_controller(self, window, start_window_id, event_queues, system_queues, frame_count):
         try:
             self.window = window
-            self.draw_window_id = draw_window_id
+            self.draw_window_id = start_window_id
             self.event_queues = event_queues
             self.system_queues = system_queues
 
-            self.draw_window_ids = range(Settings.commands_count)
+            self.draw_window_ids = Settings.window_ids
             self.start_time = timeit.default_timer()
             self.precision = Settings.precision
             self.new_stop_time = 0
             self.new_start_date_time = 0
             self.done_count = 0
             self.event_frame_count = frame_count
-            if Settings.saved:
+            if Settings.load_saved_run:
                 self.recording_state = "stop"
             else:
                 self.recording_state = "record"
@@ -1417,15 +1466,19 @@ class EventController(object):
             ord("s")          : ["one", "back", 1],
             393               : ["one", "back", 10],  # shf-left-arror
             ord("a")          : ["one", "back", 10],
-            552               : ["one", "back", 0],  # alt-shf-left-arrow
-            ord("A")          : ["one", "back", 0],
+            552               : ["one", "back", 100],  # alt-shf-left-arrow
+            546               : ["one", "back", 100],  # ctrl-left-arrow
+            ord("A")          : ["one", "back", 100],
+            ord("w")          : ["one", "back", 0],
 
             curses.KEY_RIGHT  : ["one", "forward", 1],  # right-arrow
             ord("d")          : ["one", "forward", 1],
             402               : ["one", "forward", 10],  # shf-right-arrow
             ord("f")          : ["one", "forward", 10],
-            567               : ["one", "forward", 0],  # alt-shf-right-arrow
-            ord("F")          : ["one", "forward", 0],
+            567               : ["one", "forward", 100],  # alt-shf-right-arrow
+            561               : ["one", "forward", 100],  # ctrl-right-arrow
+            ord("F")          : ["one", "forward", 100],
+            ord("e")          : ["one", "forward", 0],
 
             curses.KEY_DOWN   : ["one", "window move", "down", "one"],
             ord("j")          : ["one", "window move", "down", "one"],
@@ -1450,6 +1503,9 @@ class EventController(object):
             ord("x")          : ["one", "toggle change"],
             ord("X")          : ["one", "clear history"]
         }
+        self.tab_map = {ord("1"): 0, ord("2"): 1, ord("3"): 2, ord("4"): 3, ord("5"): 4, ord("6"): 5, ord("7"): 6,
+                        ord("8"): 7, ord("9"): 8, ord("0"): 9, ord("!"): 10, ord("@"): 11, ord("#"): 12, ord("$"): 13,
+                        ord("%"): 14, ord("^"): 15, ord("&"): 16, ord("*"): 17, ord("("): 18, ord(")"): 19}
 
     def keyboard_input(self):
         self.last_keystroke = 0
@@ -1462,20 +1518,15 @@ class EventController(object):
 
         if raw_keystroke != -1:
             # to see keystroke codes uncomment this line and tail -f debug on the commond line
-            # Debug.debug_to_file("raw: " + str(raw_keystroke)  )
+            Debug.debug_to_file("raw: " + str(raw_keystroke)  )
             pass
 
         if raw_keystroke == curses.KEY_RESIZE:
             self.event_queues[self.draw_window_id].put(("refresh",))
 
-        if raw_keystroke >= 48 and raw_keystroke <= 57:
-            # TODO fix: double key doesn't work
-            # number presses, used to change command views
-            if self.last_keystroke >= 48 and self.last_keystroke <= 57 and keystroke_time_delta < .6 and len(self.draw_window_ids) >= 9:
-                new_win = ((self.last_keystroke - 48) * 10) + (raw_keystroke - 48) - 1
-            else:
-                new_win = raw_keystroke - 48 - 1
-            if new_win < len(self.draw_window_ids) and new_win >= 0 and new_win != self.draw_window_id:
+        if raw_keystroke in self.tab_map:
+            new_win = self.tab_map[raw_keystroke]
+            if Settings.commands[new_win] and new_win != self.draw_window_id:
                 try:
                     self.event_queues[self.draw_window_id].put(("window change", new_win, "close"), timeout=Settings.timeout)
                     self.draw_window_id = new_win
@@ -1483,7 +1534,7 @@ class EventController(object):
                 except multiprocessing.queues.Full:
                     pass
 
-        if raw_keystroke == ord("r") and not Settings.saved:
+        if raw_keystroke == ord("r") and not Settings.load_saved_run:
             if self.recording_state == "record":
                 self.recording_state = "stop"
                 self.key_map[ord("r")] = ["all", "toggle recording", "stop"]
@@ -1626,28 +1677,32 @@ def terminate_curses():
     curses.curs_set(1)
     curses.endwin()
 
+
+# ======================================================================================================================
+#   Main
+# ======================================================================================================================
+
 class Main(object):
-    event_queues = []
-    system_queues = []
+    event_queues = [None] * MAX_COMMANDS
+    system_queues = [None] * MAX_COMMANDS
     frame_count = 0
     frame_draw_current = multiprocessing.Value("i", 0)
-    process_main = os.getpid()
-    process_frame_controllers = []
-    process_event_controller = []
+    process_frame_controllers = [None] * MAX_COMMANDS
+    process_event_controller = None
     stdscr = None
 
     @classmethod
     def start_curses(cls):
-        Main.stdscr = curses.initscr()
+        cls.stdscr = curses.initscr()
         curses.noecho()
         curses.cbreak()
         curses.curs_set(0)
-        Main.stdscr.keypad(True)
+        cls.stdscr.keypad(True)
         curses.start_color()
-        Main.curses_color_setup()
+        cls.curses_color_setup()
 
-    @classmethod
-    def curses_color_setup(cls):
+    @staticmethod
+    def curses_color_setup():
         curses.init_pair(1, curses.COLOR_BLACK, curses.COLOR_YELLOW)
         curses.init_pair(2, curses.COLOR_BLACK, curses.COLOR_RED)
         curses.init_pair(3, curses.COLOR_BLACK, curses.COLOR_BLUE)
@@ -1659,68 +1714,73 @@ class Main(object):
     @classmethod
     def spawn_frame_controllers(cls):
         frame_controller_seed = FrameControllers()
-        for count in range(Settings.commands_count):
-                cls.spawn_frame_controller(count, frame_controller_seed)
+        for window_id in Settings.window_ids:
+                cls.spawn_frame_controller(window_id, frame_controller_seed)
 
     @classmethod
-    def spawn_frame_controller(cls, num, frame_controller_seed):
-            Settings.window_id.append(num)
-            Main.event_queues.append(multiprocessing.Queue(0))
-            Main.system_queues.append(multiprocessing.Queue(0))
-            Main.process_frame_controllers.append(multiprocessing.Process(
+    def spawn_frame_controller(cls, window_id, frame_controller_seed):
+            cls.event_queues[window_id] = multiprocessing.Queue(0)
+            cls.system_queues[window_id] = multiprocessing.Queue(0)
+            cls.process_frame_controllers[window_id] = multiprocessing.Process(
                 target=frame_controller_seed.frame_controller,
                 args=(
-                Settings.commands[num],
-                Settings.window_id[num],
-                Settings.draw_window_id,
-                Main.event_queues[num],
-                Main.system_queues[num],
+                Settings.commands[window_id],
+                window_id,
+                Settings.start_window_id,
+                cls.event_queues[window_id],
+                cls.system_queues[window_id],
                 Settings.interval,
-                Main.frame_draw_current,
-                Settings.streaming[num],
-                Settings.glue_bottom[num],
-                Settings.no_change[num]
-            )))
+                cls.frame_draw_current,
+                Settings.streaming[window_id],
+                Settings.glue_bottom[window_id],
+                Settings.no_change[window_id]
+            ))
 
     @classmethod
     def start_frame_controllers(cls):
-        for x in range(Settings.commands_count):
-            Main.process_frame_controllers[x].start()
+        for window_id in Settings.window_ids:
+            cls.process_frame_controllers[window_id].start()
 
     @classmethod
     def main_controller(cls):
         event_controller_seed = EventController()
-        Main.process_event_controller = multiprocessing.Process(
+        cls.process_event_controller = multiprocessing.Process(
             target=event_controller_seed.event_controller,
             args=(
-                Main.stdscr,
-                Settings.draw_window_id,
-                Main.event_queues,
-                Main.system_queues,
-                Main.frame_count
+                cls.stdscr,
+                Settings.start_window_id,
+                cls.event_queues,
+                cls.system_queues,
+                cls.frame_count
             ))
-        Main.process_event_controller.start()
-        Main.process_event_controller.join()
+        cls.process_event_controller.start()
+        cls.process_event_controller.join()
+
+class MainSavedRun(Main):
 
     @classmethod
-    def load_saved_run(cls):
-        print(Settings.load_run_file)
-        try:
-            if Settings.run_compression:
-                with bz2.BZ2File(Settings.load_run_file, 'rb') as f:
-                    # load Settings first
-                    pickle.load(f, fix_imports=True)
-                    Settings.saved = True
+    def start_frame_controllers(cls):
+        if Settings.run_compression:
+            with bz2.BZ2File(Settings.load_run_file, 'rb') as run_file:
+                cls.load_pickle(f)
+        else:
+            with open(Settings.load_run_file, 'rb') as run_file:
+                cls.load_pickle(f)
 
-                    # load frames
-                    for count in range(Settings.commands_count):
-                        frame_controller = pickle.load(f, fix_imports=True)
-                        cls.frame_count = len(frame_controller.frame_state) - 1
-                        cls.spawn_frame_controller(count, frame_controller)
-                        del frame_controller
-            else:
-                with open(f, 'rb') as f:
-                    pickle.load(f, fix_imports=True)
+    @classmethod
+    def load_pickle(cls, run_file):
+        try:
+            # load Settings first
+            pickle.load(run_file, fix_imports=True)
+            Settings.load_saved_run = True
+
+            # load frames
+            for window_id in Settings.window_ids:
+                frame_controller = pickle.load(run_file, fix_imports=True)
+                cls.frame_count = len(frame_controller.frame_state) - 1
+                cls.spawn_frame_controller(window_id, frame_controller)
+                del frame_controller
+
         except EOFError:
             # not enough items to read in
             # make a better error message
@@ -1734,12 +1794,12 @@ if __name__ == "__main__":
     process_argparse()
 
     try:
-        main = Main()
-        main.start_curses()
-        if Settings.saved:
-            main.load_saved_run()
+        if Settings.load_saved_run:
+            main = MainSavedRun()
         else:
-            main.spawn_frame_controllers()
+            main = Main()
+        main.start_curses()
+        main.spawn_frame_controllers()
         main.start_frame_controllers()
         main.main_controller()
     except:
