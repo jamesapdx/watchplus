@@ -258,6 +258,7 @@ Keys controlling playback and viewing:
   Other controls:
      crtl-w .............................. Write frames and tabs to ~/[date_time].wp
                                            Stops recording during write. Load: -o <f>
+     crtl-h .............................. View this help and tab assignments
      ctrl-c .............................. Quit"""
     Settings._help = epilog
 
@@ -315,7 +316,6 @@ class Settings(object):
     streaming = [None] * MAX_COMMANDS
     glue_bottom = [None] * MAX_COMMANDS
     no_change = [None] * MAX_COMMANDS
-    static = [False] * MAX_COMMANDS
     window_ids = []
     window_id_help = 0
     interval = 1
@@ -493,7 +493,7 @@ class FrameControllers(object):
             ))
         self.process_generator.start()
 
-    def frame_controller(self, window_id, event_queue, system_queue, frame_draw_current):
+    def frame_controller(self, window_id, event_queue, system_queue, frame_draw_current_queue, frame_draw_state_queue):
         """ This is the main method that controls storing and drawing frames. First, it spawns a never
             ending generator subprocesses that builds the frames.  The generator sends the data back
             through queues, which is then stored and drawn.
@@ -505,11 +505,11 @@ class FrameControllers(object):
             self.window_id = window_id
             self.event_queue = event_queue
             self.system_queue = system_queue
-            self.frame_draw_current = frame_draw_current
+            self.frame_draw_current_queue = frame_draw_current_queue
+            self.frame_draw_state_queue = frame_draw_state_queue
             self.bottom_bar_label = Settings.bottom_bar_label[window_id]
             self.draw_window_id = Settings.start_window_id
             self.interval = Settings.interval
-            self.static = Settings.static[window_id]
             self.streaming = Settings.streaming[window_id]
             self.glued_to_bottom = True if self.streaming or Settings.glue_bottom[window_id] else False
             self.no_change = Settings.no_change[window_id]
@@ -716,10 +716,12 @@ class FrameControllers(object):
     def window_change(self):
         self.draw_window_id = self.event[1]
         if self.event[2] == "new":
-            self.draw_current = self.frame_draw_current.value
+            self.draw_current = self.frame_draw_current_queue.value
+            self.draw_state = "play" if self.frame_draw_state_queue.value else "pause"
             self.draw_live_frame()
         else:
-            self.frame_draw_current.value = self.draw_current
+            self.frame_draw_current_queue.value = self.draw_current
+            self.frame_draw_state_queue.value = 1 if self.draw_state == "play" else 0
 
     def playback_interval(self):
         if self.window_id != self.draw_window_id:
@@ -736,7 +738,8 @@ class FrameControllers(object):
             return
         self.next_playback = timeit.default_timer() + (self.playback_speed * self.interval)
         self.draw_current += 1
-        self.frame_draw_current.value = self.draw_current
+        self.frame_draw_current_queue.value = self.draw_current
+        self.frame_draw_state_queue.value = 1 if self.draw_state == "play" else 0
         self.draw_live_frame()
 
     def playback_new_frame(self):
@@ -748,7 +751,8 @@ class FrameControllers(object):
             pass
         elif self.draw_state == "play":
             self.draw_current += 1
-        self.frame_draw_current.value = self.draw_current
+        self.frame_draw_current_queue.value = self.draw_current
+        self.frame_draw_state_queue.value = 1 if self.draw_state == "play" else 0
 
     def set_playback_speed(self):
         # TODO enhance: finish this.  make global to all frame controllers
@@ -806,6 +810,7 @@ class FrameControllers(object):
             self.draw_current = 0
         else:
             self.draw_current = max(0, self.draw_current - amount)
+        self.draw_state = "pause"
         self.draw_live_frame()
 
     def draw_forward(self):
@@ -814,6 +819,10 @@ class FrameControllers(object):
             self.draw_current = self.current
         else:
             self.draw_current = min(self.current, self.draw_current + amount)
+        if self.draw_current == self.current:
+            self.draw_state = "play"
+        else:
+            self.draw_state = "pause"
         self.draw_live_frame()
 
     def move_window(self):
@@ -1184,6 +1193,7 @@ class FrameControllersStatic(FrameControllers):
             self.frame_length[self.new] = self.frame_length[0]
 
     def get_output(self):
+        # return any list of strings
         frame = []
         return frame
 
@@ -1219,8 +1229,9 @@ class FrameControllersSavedRun(FrameControllers):
     def frame_init(self):
         self.draw_current = len(self.frame_state) - 1
         self.current = self.draw_current
-        self.frame_draw_current.value = self.draw_current
+        self.frame_draw_current_queue.value = self.draw_current
         self.draw_state = "pause"
+        self.frame_draw_state_queue.value = 1 if self.draw_state == "play" else 0
         self.recording_state = "stop"
 
     def initialize_generator_childprocess(self):
@@ -1569,7 +1580,7 @@ class EventController(object):
 
     def key_mapping(self):
         self.key_map = {
-            ord(" ")          : ["all", "toggle draw state"],
+            ord(" ")          : ["one", "toggle draw state"],
 
             # ord("-")          : ["one", "playback speed", "slower"],
             # ord("_")          : ["one", "playback speed", "slower"],
@@ -1622,9 +1633,10 @@ class EventController(object):
                         ord("%"): 14, ord("^"): 15, ord("&"): 16, ord("*"): 17, ord("("): 18, ord(")"): 19,
                         8: Settings.window_id_help}
 
-    def keyboard_input(self):
+    def keyboard_input(self, raw_keystroke=0):
         self.window.nodelay(1)
-        raw_keystroke = self.window.getch()
+        if raw_keystroke == 0:
+            raw_keystroke = self.window.getch()
 
         if raw_keystroke != -1:
             # to see keystroke codes uncomment this line and tail -f debug on the commond line
@@ -1804,7 +1816,8 @@ class Main(object):
     event_queues = [None] * MAX_COMMANDS
     system_queues = [None] * MAX_COMMANDS
     frame_count = 0
-    frame_draw_current = multiprocessing.Value("i", 0)
+    frame_draw_current_queue = multiprocessing.Value("i", 0)
+    frame_draw_state_queue = multiprocessing.Value("i", 0)
     process_frame_controllers = [None] * MAX_COMMANDS
     process_event_controller = None
     stdscr = None
@@ -1832,8 +1845,8 @@ class Main(object):
     @classmethod
     def setup_help_tab(cls):
         """
-        Help is added on to the command list and handled like a normal command with it's,
-        own tab, but Settings.static = True
+        Help is added on to the command list and is handled like a normal command with it's
+        own tab
         """
         try:
             index = Settings.commands.index("Help Screen")
@@ -1846,20 +1859,17 @@ class Main(object):
             del Settings.streaming[index]
             del Settings.glue_bottom[index]
             del Settings.no_change[index]
-            del Settings.static[index]
 
         Settings.commands.append("Help Screen")
         Settings.bottom_bar_label.append("Help Screen")
         Settings.streaming.append(False)
         Settings.glue_bottom.append(False)
         Settings.no_change.append(False)
-        Settings.static.append(True)
         cls.event_queues.append(None)
         cls.system_queues.append(None)
         cls.process_frame_controllers.append(None)
 
         Settings.window_id_help = Settings.commands.index("Help Screen")
-        return
 
     @classmethod
     def spawn_frame_controllers(cls):
@@ -1882,7 +1892,8 @@ class Main(object):
             window_id,
             cls.event_queues[window_id],
             cls.system_queues[window_id],
-            cls.frame_draw_current
+            cls.frame_draw_current_queue,
+            cls.frame_draw_state_queue
         ))
 
     @classmethod
