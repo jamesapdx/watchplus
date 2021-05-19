@@ -1,18 +1,18 @@
 -n 1 
 -t 1 -x "free; echo; free -h; echo; uptime; echo; top -b -n 1 -c -p $(pgrep -f watchplus | head -n 20 | paste -d, -s -)"
--t 2 "date +%N; date; echo 'This is a test'"
--b "dmesg"               #1  
--s "ping 1.1.1.1"        #2
--x "ping -c1 1.1.1.1"    #3
-"ifconfig"
-"cat /proc/interrupts"
-"python -c 'import timeit; print(\"{:f}\".format( timeit.default_timer() ) )'"
-"this is a junk line that will error"
-"env"
-"echo -e 'abcgxz abc \n123456\n7890 !@#$&^'"
--x "nstat"
+-t 2    "date +%N; date; echo 'This is a test'"
+-b      "dmesg"               #1  
+-s      "ping 1.1.1.1"        #2
+        "ping -c1 1.1.1.1"    #3
+        "ifconfig"
+        "cat /proc/interrupts"
+        "python -c 'import timeit; print(\"{:f}\".format( timeit.default_timer() ) )'"
+        "this is a junk line that will error"
+        "env"
+        "echo -e 'abcgxz abc \n123456\n7890 !@#$&^'"
+-x      "nstat"
 
-#1  best to just use dmesg, not dmesg -w (follow). avoid using tail, it's not needed, use -b
+#1  best to just use dmesg, not dmesg -w (follow). avoid using tail unless file size is large, use -b instead
 #2  this is a good example of when to use the -s for streaming. watchplus will let the command run and collect new output
 #3  don't use streaming here, because it outputs once and quits (-c1). without -s watchplus will repeate the command every iteration, just like the watch command
 
