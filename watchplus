@@ -433,8 +433,9 @@ class FrameControllers(object):
         self.window = None
         self.terminal_height = 0
         self.terminal_width = 0
+        self.disable_line_wrap = False
         self.y_top_line = 0
-        self.y_top_sub = 0
+        self.y_top_sub_line = 0
         self.draw_move = 0
         self.resize = 0
         self.next_playback = 0
@@ -616,6 +617,7 @@ class FrameControllers(object):
                 # TODO fix len frame_changes == 0
                 pass
             elif self.frame_state[new] == "first":
+                # first frame ever, so easy store
                 for line in frame_changes:
                     line_length = min(len(line), self.max_line_length_total)
 
@@ -625,34 +627,49 @@ class FrameControllers(object):
                         self.lines.append([intern(line)])
 
                     self.lines_pointers.append([0])
+                    # line_state: 0 no change, 1 line change on existing line, 2 change on new line
                     self.lines_states.append([0])
                     self.lines_lengths.append([line_length])
 
+                    # we store all chars changes and pointers for the yellow change history. Otherwise
+                    # we would have to search all previous changed lines everytime we display a frame
                     self.lines_chars.append([[] for x in range(line_length)])
                     self.lines_chars_pointers.append([[0] for x in range(line_length)])
             else:
                 for counter, line_number in enumerate(frame_line_numbers):
                     line_length = min(len(frame_changes[counter]), self.max_line_length_total)
 
+                    # truncate the line if too long
                     if line_length > self.max_line_length:
                         line = frame_changes[counter][:self.max_line_length] + self.max_line_length_message
                     else:
                         line = frame_changes[counter]
 
                     if line_number >= len(self.lines):
+                        # must be a new line, longer than the existing output
+
                         self.lines.append([intern(line)])
+                        # use a pointer, don't store the line over and over, future frames just access the pointer
                         self.lines_pointers.append([new])
+                        # line_state: 0 no change, 1 line change on existing line, 2 change on new line
                         self.lines_states.append([2])
+                        # store the individual line length for use later
                         self.lines_lengths.append([line_length])
 
+                        # we store all chars changes and pointers for the yellow change history. Otherwise
+                        # we would have to search all previous changed lines everytime we display a frame
                         self.lines_chars.append([[char] for char in line])
                         self.lines_chars_pointers.append([[new] for x in range(line_length)])
                     else:
+                        # this a change on an existing line in the output
                         self.lines[line_number].append(intern(line))
                         self.lines_pointers[line_number].append(new)
                         self.lines_lengths[line_number].append(line_length)
+                        # line_state: 0 no change, 1 line change on existing line, 2 change on new line
                         self.lines_states[line_number].append(1)
 
+                        # we store all chars changes and pointers for the yellow change history. Otherwise
+                        # we would have to search all previous changed lines everytime we display a frame
                         for column, char in enumerate(line):
                             if column >= len(self.lines_chars[line_number]):
                                 self.lines_chars[line_number].append([char])
@@ -850,14 +867,19 @@ class FrameControllers(object):
                 self.draw_move = -self.terminal_draw_height
             elif amount == "top":
                 self.y_top_line = 0
-                self.y_top_sub = 0
+                self.y_top_sub_line = 0
 
         self.draw_live_frame()
 
     def line_wrap(self):
+        """
+        Line wrap the frame to display, just the lines in the display range.
+        Line wrapping is very complicated, must take into account glue_bottom, scrolling,
+        terminal resizes, and more.  We could just let curses handle it, but it would only scroll
+        an entire line at a time and not handle glue_bottom.
+        """
         draw_current = self.draw_current
-        # TODO fix
-        if draw_current == self.draw_current:
+        if self.current == self.draw_current:
             live = True
         else:
             live = False
@@ -866,11 +888,9 @@ class FrameControllers(object):
         self.wrapped_lines = []
 
         if self.glued_to_bottom:
-            t1 = timeit.default_timer()
             counter = 0
             start = max(0, self.frame_length[draw_current] - (2 * self.terminal_draw_height))
             start = self.frame_length[draw_current] - 1
-            # for line_number in range(start, self.frame_length[draw_current]):
             for line_number in range(start, -1, -1):
                 position = -1
                 if not live:
@@ -880,9 +900,9 @@ class FrameControllers(object):
                     # if x not in self.lines[line_number]:
                     #    continue
 
-                subs = (self.lines_lengths[line_number][position] // self.terminal_draw_width)
-                for sub in range(subs + 1):
-                    self.wrapped_lines.append([line_number, sub])
+                sub_lines = (self.lines_lengths[line_number][position] // self.terminal_draw_width)
+                for sub_line in range(sub_lines + 1):
+                    self.wrapped_lines.append([line_number, sub_line])
                     counter += 1
 
                 if counter > self.terminal_draw_height + 1:
@@ -894,28 +914,26 @@ class FrameControllers(object):
                 self.wrapped_top = len(self.wrapped_lines) - self.terminal_draw_height
             else:
                 self.wrapped_top = 0
-                # Debug.debug_to_file(self.wrapped_lines, self.wrapped_top, self.terminal_draw_height)
             self.y_top_line = self.wrapped_lines[self.wrapped_top][0]
-            self.y_top_sub = self.wrapped_lines[self.wrapped_top][1]
+            self.y_top_sub_line = self.wrapped_lines[self.wrapped_top][1]
             self.wrapped_lines.reverse()
-            # Debug.debug_to_file(timeit.default_timer() - t1, counter)
         else:
             if self.y_top_line < 0:
                 self.y_top_line = 0
-                self.y_top_sub = 0
+                self.y_top_sub_line = 0
             elif self.y_top_line >= self.frame_length[draw_current]:
                 self.y_top_line = self.frame_length[draw_current] - 1
-                self.y_top_sub = 0
+                self.y_top_sub_line = 0
 
-            if self.y_top_sub > 0:
-                # the line may have shrunk on this frame and self.y_top_subs may be to big, correct if needed
+            if self.y_top_sub_line > 0:
+                # the line may have shrunk on this frame and self.y_top_sub_lines may be to big, correct if needed
                 position = -1
                 if not live:
                     position = bisect.bisect(self.lines_pointers[self.y_top_line], draw_current) - 1
 
-                subs = (self.lines_lengths[self.y_top_line][position] // self.terminal_draw_width)
-                if self.y_top_sub > subs:
-                    self.y_top_sub = subs
+                sub_lines = (self.lines_lengths[self.y_top_line][position] // self.terminal_draw_width)
+                if self.y_top_sub_line > sub_lines:
+                    self.y_top_sub_line = sub_lines
 
             if self.draw_move != 0:
                 start = max(0, self.y_top_line - self.terminal_draw_height)
@@ -925,15 +943,15 @@ class FrameControllers(object):
                     if not live:
                         position = bisect.bisect(self.lines_pointers[line_number], draw_current) - 1
 
-                    subs = (self.lines_lengths[line_number][position] // self.terminal_draw_width)
-                    for sub in range(subs + 1):
-                        self.wrapped_lines.append([line_number, sub])
+                    sub_lines = (self.lines_lengths[line_number][position] // self.terminal_draw_width)
+                    for sub_line in range(sub_lines + 1):
+                        self.wrapped_lines.append([line_number, sub_line])
 
                     if line_number == self.frame_length[draw_current] - 1:
                         bottom = len(self.wrapped_lines) - 1
 
-                # Debug.debug_to_file("wrapped lines subs", self.wrapped_lines)
-                self.wrapped_top = self.wrapped_lines.index([self.y_top_line, self.y_top_sub])
+                # Debug.debug_to_file("wrapped lines sub_lines", self.wrapped_lines)
+                self.wrapped_top = self.wrapped_lines.index([self.y_top_line, self.y_top_sub_line])
 
                 if self.draw_move < 0:
                     # Debug.debug_to_file("wrapped top1", self.wrapped_top)
@@ -956,10 +974,8 @@ class FrameControllers(object):
                         self.glued_to_bottom = True
 
                 self.y_top_line = self.wrapped_lines[self.wrapped_top][0]
-                self.y_top_sub = self.wrapped_lines[self.wrapped_top][1]
+                self.y_top_sub_line = self.wrapped_lines[self.wrapped_top][1]
         self.draw_move = 0
-        # Debug.debug_to_file("y top line", self.y_top_line)
-        # Debug.debug_to_file("y top sub", self.y_top_sub)
 
     def draw_live_frame(self):
         if self.window_id != self.draw_window_id:
@@ -994,6 +1010,9 @@ class FrameControllers(object):
             try:
                 for line_number in range(draw_start, draw_end):
 
+                    # we don't stare the same line over an over, we just store it once and retrieve the pointer
+                    # to that line.  we need bisect to find last closet pointer to the frame
+                    # we are drawing (draw_current). if we are live than we can just grab the last pointer at [-1]
                     position = -1
                     if not live:
                         position = bisect.bisect(self.lines_pointers[line_number], draw_current) - 1
@@ -1001,29 +1020,33 @@ class FrameControllers(object):
 
                     line_start = 0
                     if line_number == self.y_top_line:
-                        line_start = self.y_top_sub * self.terminal_draw_width
+                        line_start = self.y_top_sub_line * self.terminal_draw_width
 
                     line = self.lines[line_number][position]
                     line_length = self.lines_lengths[line_number][position]
+                    # line_state: 0 no change, 1 line change on existing line, 2 change on new line
                     line_state = self.lines_states[line_number][position]
 
                     if line_state == 0 or self.no_change:
+                        # no change on "pointed to" line, or display changes turned off
                         self.window.addstr(line[line_start:], curses.color_pair(0))
                     elif line_state == 2:
+                        # change on new a new line (longer than previous output)
                         if pointer == draw_current:
+                            # change on current frame, so use red
                             color = 2
                         else:
+                            # change on older frame,so it is just a history, use yellow
                             color = 1
                         color_pair = curses.color_pair(color)
                         self.window.addstr(line[line_start:], color_pair)
                     else:
+                        # self line_state == 1, change on an existing "pointed to" line
                         for column in range(line_start, line_length):
                             try:
                                 char = line[column]
                             except IndexError:
                                 char = "?"
-
-                            # NEED TO DO CHAR TO CAHR LAST
 
                             position = -1
                             if not live:
@@ -1033,10 +1056,13 @@ class FrameControllers(object):
                             try:
                                 color = 0
                                 if pointer == 0:
+                                    # the first frame, so no change
                                     pass
                                 elif pointer == draw_current:
+                                    # the new char is on this frame, so change color is red
                                     color = 2
                                 else:
+                                    # the new char is an old frame, so yellow history
                                     color = 1
                             except (IndexError, ValueError):
                                 pass
@@ -1179,6 +1205,7 @@ class FrameControllersStatic(FrameControllers):
 
                     self.lines.append([intern(line)])
                     self.lines_pointers.append([0])
+                    # line_state: 0 no change, 1 line change on existing line, 2 change on new line
                     self.lines_states.append([0])
                     self.lines_lengths.append([line_length])
 
