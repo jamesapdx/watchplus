@@ -433,9 +433,9 @@ class FrameControllers(object):
         self.window = None
         self.terminal_height = 0
         self.terminal_width = 0
-        self.disable_line_wrap = False
+        self.line_wrap_disable = False
         self.y_top_line = 0
-        self.y_top_sub_line = 0
+        self.y_top_num_wrapped_lines = 0
         self.draw_move = 0
         self.resize = 0
         self.next_playback = 0
@@ -473,6 +473,7 @@ class FrameControllers(object):
             "window move": self.move_window,
             "toggle draw state": self.draw_state_toggle,
             "toggle recording": self.toggle_recording,
+            "toggle line wrap": self.toggle_line_warp,
             "playback speed": self.set_playback_speed,
             "toggle change": self.toggle_change,
             "clear history": self.clear_history,
@@ -713,6 +714,13 @@ class FrameControllers(object):
             self.no_change = False
         self.draw_live_frame()
 
+    def toggle_line_warp(self):
+        if self.line_wrap_disable:
+            self.line_wrap_disable = False
+        else:
+            self.line_wrap_disable = True
+        self.draw_live_frame()
+
     def clear_history(self):
         # self.heatmap_type = normal, first, full, refresh, ignore, noheatmap
         for counter in range(self.draw_current, len(self.frame_state)):
@@ -867,9 +875,49 @@ class FrameControllers(object):
                 self.draw_move = -self.terminal_draw_height
             elif amount == "top":
                 self.y_top_line = 0
-                self.y_top_sub_line = 0
+                self.y_top_num_wrapped_lines = 0
 
         self.draw_live_frame()
+
+    def no_line_wrap(self):
+        """
+        simply handle window moving here, using self.draw_move = +- lines
+        """
+        self.y_top_num_wrapped_lines = 0
+        if self.draw_move != 0:
+            self.y_top_line += self.draw_move
+            self.y_top_line += self.draw_move
+
+        self.draw_move = 0
+
+    # def move_window(self):
+    #     self.get_terminal_size()
+    #     direction = self.event[1]
+    #     amount = self.event[2]
+    #
+    #     if direction == "down":
+    #         if amount == "one":
+    #             self.draw_move = 1
+    #         elif amount == "page":
+    #             self.draw_move = self.terminal_draw_height
+    #         elif amount == "half":
+    #             self.draw_move = int(self.terminal_draw_height/2)
+    #         elif amount == "bottom":
+    #             self.glued_to_bottom = True
+    #
+    #     if direction == "up":
+    #         self.glued_to_bottom = False
+    #         if amount == "one":
+    #             self.draw_move = -1
+    #         elif amount == "half":
+    #             self.draw_move = -int(self.terminal_draw_height/2)
+    #         elif amount == "page":
+    #             self.draw_move = -self.terminal_draw_height
+    #         elif amount == "top":
+    #             self.y_top_line = 0
+    #             self.y_top_sub = 0
+    #
+    #     self.draw_live_frame()
 
     def line_wrap(self):
         """
@@ -877,6 +925,8 @@ class FrameControllers(object):
         Line wrapping is very complicated, must take into account glue_bottom, scrolling,
         terminal resizes, and more.  We could just let curses handle it, but it would only scroll
         an entire line at a time and not handle glue_bottom.
+
+        Handle window moving here, using self.draw_move = +- lines
         """
         draw_current = self.draw_current
         if self.current == self.draw_current:
@@ -885,7 +935,7 @@ class FrameControllers(object):
             live = False
         bottom = None
 
-        self.wrapped_lines = []
+        wrapped_lines = []
 
         if self.glued_to_bottom:
             counter = 0
@@ -902,38 +952,38 @@ class FrameControllers(object):
 
                 sub_lines = (self.lines_lengths[line_number][position] // self.terminal_draw_width)
                 for sub_line in range(sub_lines + 1):
-                    self.wrapped_lines.append([line_number, sub_line])
+                    wrapped_lines.append([line_number, sub_line])
                     counter += 1
 
                 if counter > self.terminal_draw_height + 1:
                     break
 
-            self.wrapped_lines.reverse()
+            wrapped_lines.reverse()
 
-            if len(self.wrapped_lines) > self.terminal_draw_height:
-                self.wrapped_top = len(self.wrapped_lines) - self.terminal_draw_height
+            if len(wrapped_lines) > self.terminal_draw_height:
+                wrapped_top = len(wrapped_lines) - self.terminal_draw_height
             else:
-                self.wrapped_top = 0
-            self.y_top_line = self.wrapped_lines[self.wrapped_top][0]
-            self.y_top_sub_line = self.wrapped_lines[self.wrapped_top][1]
-            self.wrapped_lines.reverse()
+                wrapped_top = 0
+            self.y_top_line = wrapped_lines[wrapped_top][0]
+            self.y_top_num_wrapped_lines = wrapped_lines[wrapped_top][1]
+            wrapped_lines.reverse()
         else:
             if self.y_top_line < 0:
                 self.y_top_line = 0
-                self.y_top_sub_line = 0
+                self.y_top_num_wrapped_lines = 0
             elif self.y_top_line >= self.frame_length[draw_current]:
                 self.y_top_line = self.frame_length[draw_current] - 1
-                self.y_top_sub_line = 0
+                self.y_top_num_wrapped_lines = 0
 
-            if self.y_top_sub_line > 0:
-                # the line may have shrunk on this frame and self.y_top_sub_lines may be to big, correct if needed
+            if self.y_top_num_wrapped_lines > 0:
+                # the line may have shrunk on this frame and self.y_top_num_wrapped_liness may be to big, correct if needed
                 position = -1
                 if not live:
                     position = bisect.bisect(self.lines_pointers[self.y_top_line], draw_current) - 1
 
                 sub_lines = (self.lines_lengths[self.y_top_line][position] // self.terminal_draw_width)
-                if self.y_top_sub_line > sub_lines:
-                    self.y_top_sub_line = sub_lines
+                if self.y_top_num_wrapped_lines > sub_lines:
+                    self.y_top_num_wrapped_lines = sub_lines
 
             if self.draw_move != 0:
                 start = max(0, self.y_top_line - self.terminal_draw_height)
@@ -945,36 +995,30 @@ class FrameControllers(object):
 
                     sub_lines = (self.lines_lengths[line_number][position] // self.terminal_draw_width)
                     for sub_line in range(sub_lines + 1):
-                        self.wrapped_lines.append([line_number, sub_line])
+                        wrapped_lines.append([line_number, sub_line])
 
                     if line_number == self.frame_length[draw_current] - 1:
-                        bottom = len(self.wrapped_lines) - 1
+                        bottom = len(wrapped_lines) - 1
 
-                # Debug.debug_to_file("wrapped lines sub_lines", self.wrapped_lines)
-                self.wrapped_top = self.wrapped_lines.index([self.y_top_line, self.y_top_sub_line])
+                wrapped_top = wrapped_lines.index([self.y_top_line, self.y_top_num_wrapped_lines])
 
                 if self.draw_move < 0:
-                    # Debug.debug_to_file("wrapped top1", self.wrapped_top)
-                    self.wrapped_top = max(0, self.wrapped_top + self.draw_move)
-                    # Debug.debug_to_file("draw_move", self.draw_move)
+                    wrapped_top = max(0, wrapped_top + self.draw_move)
                 else:
-                    # Debug.debug_to_file("wrapped lines len", len(self.wrapped_lines))
-                    if len(self.wrapped_lines) > self.terminal_draw_height:
-                        self.wrapped_top = min(len(self.wrapped_lines) - 1, self.wrapped_top + self.draw_move)
-                        # Debug.debug_to_file("wrapped top1", self.wrapped_top)
-                        self.wrapped_bottom = min(len(self.wrapped_lines) - 1,
-                                                  self.wrapped_top + self.terminal_draw_height - 1)
-                        # Debug.debug_to_file("wrapped top2", self.wrapped_top)
-                        self.wrapped_top = self.wrapped_bottom - self.terminal_draw_height + 1
+                    if len(wrapped_lines) > self.terminal_draw_height:
+                        wrapped_top = min(len(wrapped_lines) - 1, wrapped_top + self.draw_move)
+                        wrapped_bottom = min(len(wrapped_lines) - 1,
+                                                  wrapped_top + self.terminal_draw_height - 1)
+                        wrapped_top = wrapped_bottom - self.terminal_draw_height + 1
 
-                        if self.wrapped_bottom == bottom:
+                        if wrapped_bottom == bottom:
                             self.glued_to_bottom = True
                     else:
-                        self.wrapped_top = 0
+                        wrapped_top = 0
                         self.glued_to_bottom = True
 
-                self.y_top_line = self.wrapped_lines[self.wrapped_top][0]
-                self.y_top_sub_line = self.wrapped_lines[self.wrapped_top][1]
+                self.y_top_line = wrapped_lines[wrapped_top][0]
+                self.y_top_num_wrapped_lines = wrapped_lines[wrapped_top][1]
         self.draw_move = 0
 
     def draw_live_frame(self):
@@ -983,7 +1027,9 @@ class FrameControllers(object):
 
         self.window.clear()
 
+        # use this for status bar
         self.draw_height_adder = 1
+        # use this for line numbers (future)
         self.draw_width_adder = 0
         self.get_terminal_size()
 
@@ -1001,7 +1047,10 @@ class FrameControllers(object):
             status_bar, color_pair = self.build_status_bar()
         else:
 
-            self.line_wrap()
+            if self.line_wrap_disable:
+                self.no_line_wrap()
+            else:
+                self.line_wrap()
 
             draw_start = self.y_top_line
             draw_end = min(self.frame_length[draw_current], self.y_top_line + self.terminal_draw_height)
@@ -1019,14 +1068,19 @@ class FrameControllers(object):
                     pointer = self.lines_pointers[line_number][position]
 
                     line_start = 0
-                    if line_number == self.y_top_line:
-                        line_start = self.y_top_sub_line * self.terminal_draw_width
-
-                    line = self.lines[line_number][position]
-                    line_length = self.lines_lengths[line_number][position]
-                    # line_state: 0 no change, 1 line change on existing line, 2 change on new line
+                    if self.line_wrap_disable:
+                        # cut the line short to term width
+                        line = self.lines[line_number][position][:self.terminal_draw_width - 1]
+                    else:
+                        # long line, let curses wrap it for us
+                        line = self.lines[line_number][position]
+                        if line_number == self.y_top_line:
+                            # top line, calculate this because of chopped wrap
+                            line_start = self.y_top_num_wrapped_lines * self.terminal_draw_width
+                    line_length = len(line)
                     line_state = self.lines_states[line_number][position]
 
+                    # line_state: 0 no change, 1 line change on existing line, 2 change on new line
                     if line_state == 0 or self.no_change:
                         # no change on "pointed to" line, or display changes turned off
                         self.window.addstr(line[line_start:], curses.color_pair(0))
@@ -1041,7 +1095,7 @@ class FrameControllers(object):
                         color_pair = curses.color_pair(color)
                         self.window.addstr(line[line_start:], color_pair)
                     else:
-                        # self line_state == 1, change on an existing "pointed to" line
+                        # this line self line_state == 1, change on an existing "pointed to" line
                         for column in range(line_start, line_length):
                             try:
                                 char = line[column]
@@ -1077,6 +1131,7 @@ class FrameControllers(object):
 
             status_bar, color_pair = self.build_status_bar(draw_start, draw_end, self.frame_length[draw_current])
 
+        # draw status bar to curses
         line_number = self.terminal_height - 1
         for column in range(self.terminal_width - 1):
             # need the -1 because of a bug in curses, it sticks a \n on the end of the last line
@@ -1608,6 +1663,7 @@ class EventController(object):
     def key_mapping(self):
         self.key_map = {
             ord(" ")          : ["one", "toggle draw state"],
+            ord("l")          : ["one", "toggle line wrap"],
 
             # ord("-")          : ["one", "playback speed", "slower"],
             # ord("_")          : ["one", "playback speed", "slower"],
