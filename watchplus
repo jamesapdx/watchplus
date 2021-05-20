@@ -50,7 +50,9 @@ except ImportError:
 # ======================================================================================================================
 
 MAX_COMMANDS = 20
-MAX_LINE_LENGTH = 10000
+MAX_LINE_LENGTH = 10000  # number of characters on a line, will truncate if needed
+MAX_TABS = 99
+HELP_TAB = 90
 
 def process_argparse():
     # first split all command line args based on -- only
@@ -130,7 +132,7 @@ def extract_system_command_args(argv_split, source):
         namespace = system_args
         argv_split[count] = arg[1]
 
-    # convert
+    # convert to argparse.Namespace objects
     for argv in argv_split:
         if argv:
             parser = init_command_parser()
@@ -220,15 +222,21 @@ def store_args_in_settings(system_args, commands_assigned, commands_unassigned):
             Settings.no_change[count] = command.no_change
             Settings.window_ids.append(count)
             Settings.commands_assigned.append(command.print)
+            Settings._frame_controller_seeds[count] = FrameControllers()
+    Settings.start_window_id = Settings.window_ids[0]
     for command in enumerate(commands_unassigned):
         Settings.commands_unassigned.append(command.print)
-    Settings.start_window_id = Settings.window_ids[0]
 
-def print_help():
+    Settings._setup_help()
+
+def print_help(stdout=True):
     parser = init_system_parser()
     add_system_args(parser)
     add_command_args(parser)
-    parser.print_help()
+    if stdout:
+        parser.print_help()
+    else:
+        return parser.format_help()
 
 def init_system_parser():
     terminal_width = int(run_linux("tput cols")[0])
@@ -248,19 +256,19 @@ Keys controlling playback and viewing:
   Viewing controls:
      1-0, shift 1-0 ...................... Change tab
                                            1-0 = tab 1-10, shft-1-0 = tab 11-20
-     x ................................... Toggle change history display on/off
      k j ................................. Up | Down
      Up | Down Arrows .................... Up | Down
      Ctrl-u | Ctrl-d ..................... Half page up | down
      Ctrl-b | Ctrl-f ..................... Page up | down
      Page-Up | Page-Down ................. Page up | down
      g | G ............................... Top | Bottom
+     x ................................... Toggle change history display on/off
+     l ................................... Toggle line wrap
   Other controls:
      crtl-w .............................. Write frames and tabs to ~/[date_time].wp
                                            Stops recording during write. Load: -o <f>
      crtl-h .............................. View this help and tab assignments
      ctrl-c .............................. Quit"""
-    Settings._help = epilog
 
     return argparse.ArgumentParser(formatter_class=format_func,
                                    description=description,
@@ -291,16 +299,18 @@ def add_system_args(parser):
                        help="Show this help.")
 
 def add_command_args(parser):
-    group = parser.add_argument_group("Command options")
+    group = parser.add_argument_group("Tab/Command options")
     group.add_argument("--", dest="separator", action="store_true",
                        help="Separator for commands on command line. Not needed for the first one.\n"
                             "Example: %(prog)s -n 1 \"dmesg\" -- -s \"ping -4 1.1.1.1\" -- \"nstat\"")
     group.add_argument("-s", "--streaming", dest="streaming", action="store_true",
-                       help="For use with continual streaming commands such as tcpdump and ping.")
+                       help="Use with continual streaming commands such as tcpdump and ping.")
     group.add_argument("-b", "--bottom", dest="glue_bottom", action="store_true",
                        help="Start this tab at the bottom of the output, similar to follow option.")
     group.add_argument("-x", "--change", dest="no_change", action="store_true",
                        help="Do not display change history. Can be toggled on/off with 'x'.")
+    group.add_argument("-l", "--line_wrap", dest="no_line_wrap", action="store_true",
+                       help="Disable line wrap. Can be toggled on/off with 'l'.")
     group.add_argument("-t", "--tab", dest="tab", type=int, metavar="<t>",
                        help="Assign this command to tab <t> if possible, 1-{}.\n".format(MAX_COMMANDS))
     group.add_argument("\"cmd\"", help="Command to be run, up to {} allowed, each in in a separate tab.\n"
@@ -308,16 +318,21 @@ def add_command_args(parser):
                        format(MAX_COMMANDS))
 
 class Settings(object):
+    # tab/command settings (mostly from argparse)
     printable = string.digits + string.punctuation + string.ascii_letters + " "
-    commands = [None] * MAX_COMMANDS
+    commands = [None] * MAX_TABS
+    _frame_controller_seeds = [None] * MAX_TABS
     commands_assigned = [None]
     commands_unassigned = []
-    bottom_bar_label = [None] * MAX_COMMANDS
-    streaming = [None] * MAX_COMMANDS
-    glue_bottom = [None] * MAX_COMMANDS
-    no_change = [None] * MAX_COMMANDS
+    bottom_bar_label = [None] * MAX_TABS
+    text = [None] * MAX_TABS
+    streaming = [False] * MAX_TABS
+    glue_bottom = [False] * MAX_TABS
+    no_change = [False] * MAX_TABS
+    no_line_wrap = [False] * MAX_TABS
+
+    # general and system settings
     window_ids = []
-    window_id_help = 0
     interval = 1
     timeout = .4
     precision = False
@@ -327,11 +342,24 @@ class Settings(object):
     max_line_length = MAX_LINE_LENGTH
     load_saved_run = False
     load_run_file = ""
-    _help = ""
+
+    @classmethod
+    def _setup_help(cls):
+        if not hasattr(cls, "window_id_help"):
+            cls.window_id_help = HELP_TAB
+            cls.window_ids.append(cls.window_id_help)
+        cls.text[cls.window_id_help] = print_help(stdout=False)
+        cls.commands[cls.window_id_help] = "Help Screen"
+        cls.bottom_bar_label[cls.window_id_help] = "Help Screen"
+        cls._frame_controller_seeds[cls.window_id_help] = FrameControllersHelp()
+        cls.no_line_wrap[cls.window_id_help] = False
+        cls.no_change[cls.window_id_help] = True
+        cls.glue_bottom[cls.window_id_help] = False
 
     @classmethod
     def __getstate__(cls):
         # this is needed to pickle class variables. Skip private variables and methods
+        # any variable and methods that should not be including in saved runs should be private with _ in front
         return {var_name: cls.__dict__[var_name] for var_name in cls.__dict__ if not var_name.startswith("_")}
 
     @classmethod
@@ -433,7 +461,6 @@ class FrameControllers(object):
         self.window = None
         self.terminal_height = 0
         self.terminal_width = 0
-        self.line_wrap_disable = False
         self.y_top_line = 0
         self.y_top_num_wrapped_lines = 0
         self.draw_move = 0
@@ -515,6 +542,7 @@ class FrameControllers(object):
             self.streaming = Settings.streaming[window_id]
             self.glued_to_bottom = True if self.streaming or Settings.glue_bottom[window_id] else False
             self.no_change = Settings.no_change[window_id]
+            self.no_line_wrap = Settings.no_line_wrap[window_id]
 
             # init
             self.common_init()
@@ -715,10 +743,10 @@ class FrameControllers(object):
         self.draw_live_frame()
 
     def toggle_line_warp(self):
-        if self.line_wrap_disable:
-            self.line_wrap_disable = False
+        if self.no_line_wrap:
+            self.no_line_wrap = False
         else:
-            self.line_wrap_disable = True
+            self.no_line_wrap = True
         self.draw_live_frame()
 
     def toggle_draw_state(self):
@@ -1027,7 +1055,7 @@ class FrameControllers(object):
             status_bar, color_pair = self.build_status_bar()
         else:
 
-            if self.line_wrap_disable:
+            if self.no_line_wrap:
                 self.line_wrap_off()
             else:
                 self.line_wrap()
@@ -1048,7 +1076,7 @@ class FrameControllers(object):
                     pointer = self.lines_pointers[line_number][position]
 
                     line_start = 0
-                    if self.line_wrap_disable:
+                    if self.no_line_wrap:
                         # cut the line short to term width
                         line = self.lines[line_number][position][:self.terminal_draw_width - 1]
                     else:
@@ -1178,20 +1206,20 @@ class FrameControllers(object):
 
     def write_to_file(self):
         run_file = self.event[1]
-
-        try:
-            if Settings.run_compression:
-                with bz2.BZ2File(run_file, 'ab') as f:
-                    pickle.dump(self, f, protocol=2)
-            else:
-                with open(run_file, 'ab') as f:
-                    pickle.dump(self, f, protocol=2)
-        except FileNotFoundError:
-            # TODO add failed message, remove started file
-            pass
-            # except:
-            # TODO add failed message, remove started file
-            pass
+        if not self.window_id == Settings.window_id_help:
+            try:
+                if Settings.run_compression:
+                    with bz2.BZ2File(run_file, 'ab') as f:
+                        pickle.dump(self, f, protocol=2)
+                else:
+                    with open(run_file, 'ab') as f:
+                        pickle.dump(self, f, protocol=2)
+            except FileNotFoundError:
+                # TODO add failed message, remove started file
+                pass
+                # except:
+                # TODO add failed message, remove started file
+                pass
 
 
 class FrameControllersStatic(FrameControllers):
@@ -1269,7 +1297,7 @@ class FrameControllersStatic(FrameControllers):
 class FrameControllersHelp(FrameControllersStatic):
 
     def get_output(self):
-        help = Settings._help.splitlines()
+        help = Settings.text[Settings.window_id_help].splitlines()
         help += ["", "Tabs and Commands:"]
         help += ["      {}".format(x) for x in Settings.commands_assigned if x is not None]
         commands_unassigned = [x for x in Settings.commands_unassigned if x]
@@ -1590,7 +1618,7 @@ class EventController(object):
             self.draw_window_id = Settings.start_window_id
             self.event_queues = event_queues
             self.system_queues = system_queues
-            self.draw_window_ids = Settings.window_ids + [Settings.window_id_help]
+            self.draw_window_ids = Settings.window_ids
             self.start_time = timeit.default_timer()
             self.precision = Settings.precision
             self.new_stop_time = 0
@@ -1876,12 +1904,12 @@ def terminate_curses():
 # ======================================================================================================================
 
 class Main(object):
-    event_queues = [None] * MAX_COMMANDS
-    system_queues = [None] * MAX_COMMANDS
+    event_queues = [None] * MAX_TABS
+    system_queues = [None] * MAX_TABS
     frame_count = 0
     frame_draw_current_queue = multiprocessing.Value("i", 0)
     frame_draw_state_queue = multiprocessing.Value("i", 0)
-    process_frame_controllers = [None] * MAX_COMMANDS
+    process_frame_controllers = [None] * MAX_TABS
     process_event_controller = None
     stdscr = None
 
@@ -1906,44 +1934,9 @@ class Main(object):
         curses.init_pair(34, curses.COLOR_BLACK, curses.COLOR_RED)
 
     @classmethod
-    def setup_help_tab(cls):
-        """
-        Help is added on to the command list and is handled like a normal command with it's
-        own tab
-        """
-        try:
-            index = Settings.commands.index("Help Screen")
-        except ValueError:
-            pass
-        else:
-            # clear out help that was imported
-            del Settings.commands[index]
-            del Settings.bottom_bar_label[index]
-            del Settings.streaming[index]
-            del Settings.glue_bottom[index]
-            del Settings.no_change[index]
-
-        Settings.commands.append("Help Screen")
-        Settings.bottom_bar_label.append("Help Screen")
-        Settings.streaming.append(False)
-        Settings.glue_bottom.append(False)
-        Settings.no_change.append(False)
-        cls.event_queues.append(None)
-        cls.system_queues.append(None)
-        cls.process_frame_controllers.append(None)
-
-        Settings.window_id_help = Settings.commands.index("Help Screen")
-
-    @classmethod
     def spawn_frame_controllers(cls):
-        frame_controller_seed = FrameControllers()
         for window_id in Settings.window_ids:
-                cls.spawn_frame_controller(window_id, frame_controller_seed)
-
-        # add help tab
-        cls.setup_help_tab()
-        frame_controller_seed = FrameControllersHelp()
-        cls.spawn_frame_controller(Settings.window_id_help, frame_controller_seed)
+            cls.spawn_frame_controller(window_id, Settings._frame_controller_seeds[window_id])
 
     @classmethod
     def spawn_frame_controller(cls, window_id, frame_controller_seed):
@@ -1952,18 +1945,17 @@ class Main(object):
         cls.process_frame_controllers[window_id] = multiprocessing.Process(
             target=frame_controller_seed.frame_controller,
             args=(
-            window_id,
-            cls.event_queues[window_id],
-            cls.system_queues[window_id],
-            cls.frame_draw_current_queue,
-            cls.frame_draw_state_queue
+                window_id,
+                cls.event_queues[window_id],
+                cls.system_queues[window_id],
+                cls.frame_draw_current_queue,
+                cls.frame_draw_state_queue
         ))
 
     @classmethod
     def start_frame_controllers(cls):
         for window_id in Settings.window_ids:
             cls.process_frame_controllers[window_id].start()
-        cls.process_frame_controllers[Settings.window_id_help].start()
 
     @classmethod
     def main_controller(cls):
@@ -1985,10 +1977,10 @@ class MainSavedRun(Main):
     def start_frame_controllers(cls):
         if Settings.run_compression:
             with bz2.BZ2File(Settings.load_run_file, 'rb') as run_file:
-                cls.load_pickle(f)
+                cls.load_pickle(run_file)
         else:
             with open(Settings.load_run_file, 'rb') as run_file:
-                cls.load_pickle(f)
+                cls.load_pickle(run_file)
 
     @classmethod
     def load_pickle(cls, run_file):
@@ -1997,26 +1989,30 @@ class MainSavedRun(Main):
             pickle.load(run_file, fix_imports=True)
             Settings.load_saved_run = True
             Settings.start_window_id = Settings.window_ids[0]
-            cls.setup_help_tab()
+            # we need to rebuild help tab, as we don't want to use the saved help
+            Settings._setup_help()
 
             # load frames
             for window_id in Settings.window_ids:
-                # if we load data into a FrameController instance, then spawn the processes from that instance,
-                # the instance data will be copied into the new processes
-                frame_controller = pickle.load(run_file, fix_imports=True)
+                if window_id == Settings.window_id_help:
+                    # we will load in the help separately, as it is not from the saved group)
+                    cls.spawn_frame_controller(Settings.window_id_help,
+                                               Settings._frame_controller_seeds[Settings.window_id_help])
+                else:
+                    # if we load data into a FrameController instance, then spawn the processes from that instance,
+                    # the instance data will be copied into the new processes
+                    frame_controller = pickle.load(run_file, fix_imports=True)
 
-                # convert loaded class instance to a saved instance
-                frame_controller_seed = FrameControllersSavedRun()
-                frame_controller_seed.__dict__.update(frame_controller.__dict__)
-                del frame_controller
+                    # convert loaded class instance (FrameController) to a saved instance (FrameControllerSavedRun)
+                    frame_controller_seed = FrameControllersSavedRun()
+                    frame_controller_seed.__dict__.update(frame_controller.__dict__)
+                    del frame_controller
 
-                cls.frame_count = len(frame_controller.frame_state) - 1
-                cls.spawn_frame_controller(window_id, frame_controller)
-                del frame_controller_seed
+                    cls.frame_count = len(frame_controller.frame_state) - 1
+                    cls.spawn_frame_controller(window_id, frame_controller)
+                    del frame_controller_seed
 
             # add help tab
-            frame_controller_seed = FrameControllersHelp()
-            cls.spawn_frame_controller(Settings.window_id_help, frame_controller_seed)
 
         except EOFError:
             # not enough items to read in

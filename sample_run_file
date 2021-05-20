@@ -11,7 +11,7 @@
          "env"
          "echo -e 'abcgxz abc \n123456\n7890 !@#$&^'"
 -x       "nstat"
--t 11 -s -x "while true;do python -c 'from random import *;l=\" \"*200+\".\"*20+\"*\"*5+\"^~+o\";print(\" \".join([l[randrange(len(l))] for i in range(200)]))';sleep 4;done"
+-t 11 -s -x -l "while true;do python -c 'from random import *;l=\" \"*200+\".\"*20+\"*\"*5+\"^~+o\";print(\" \".join([l[randrange(len(l))] for i in range(200)]))';sleep 4;done"
 
 #1  best to just use dmesg, not dmesg -w (follow). avoid using tail unless file size is large, use -b instead
 #2  this is a good example of when to use the -s for streaming. watchplus will let the command run and collect new output
