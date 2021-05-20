@@ -468,10 +468,10 @@ class FrameControllers(object):
             "new frame": self.received_new_frame_notice_from_generator,      # comes from frame generator self.event_queue
             "window change": self.window_change,
             "refresh": self.draw_refresh,
-            "back": self.draw_back,
-            "forward": self.draw_forward,
-            "window move": self.move_window,
-            "toggle draw state": self.draw_state_toggle,
+            "back": self.frames_back,
+            "forward": self.frames_forward,
+            "window move": self.move_window_up_down,
+            "toggle draw state": self.toggle_draw_state,
             "toggle recording": self.toggle_recording,
             "toggle line wrap": self.toggle_line_warp,
             "playback speed": self.set_playback_speed,
@@ -721,7 +721,15 @@ class FrameControllers(object):
             self.line_wrap_disable = True
         self.draw_live_frame()
 
+    def toggle_draw_state(self):
+        if self.draw_state == "play":
+            self.draw_state = "pause"
+        else:
+            self.draw_state = "play"
+        self.draw_live_frame()
+
     def clear_history(self):
+        # TODO test and fix
         # self.heatmap_type = normal, first, full, refresh, ignore, noheatmap
         for counter in range(self.draw_current, len(self.frame_state)):
             if self.heatmap_state[counter] == "refresh":
@@ -822,14 +830,7 @@ class FrameControllers(object):
     def draw_refresh(self):
         self.draw_live_frame()
 
-    def draw_state_toggle(self):
-        if self.draw_state == "play":
-            self.draw_state = "pause"
-        else:
-            self.draw_state = "play"
-        self.draw_live_frame()
-
-    def draw_back(self):
+    def frames_back(self):
         amount = self.event[1]
         if amount == 0:
             self.draw_current = 0
@@ -838,7 +839,7 @@ class FrameControllers(object):
         self.draw_state = "pause"
         self.draw_live_frame()
 
-    def draw_forward(self):
+    def frames_forward(self):
         amount = self.event[1]
         if amount == 0:
             self.draw_current = self.current
@@ -850,7 +851,7 @@ class FrameControllers(object):
             self.draw_state = "pause"
         self.draw_live_frame()
 
-    def move_window(self):
+    def move_window_up_down(self):
         self.get_terminal_size()
         direction = self.event[1]
         amount = self.event[2]
@@ -879,45 +880,24 @@ class FrameControllers(object):
 
         self.draw_live_frame()
 
-    def no_line_wrap(self):
+    def line_wrap_off(self):
         """
-        simply handle window moving here, using self.draw_move = +- lines
+        handle window moving here, using self.draw_move = +- lines
         """
         self.y_top_num_wrapped_lines = 0
-        if self.draw_move != 0:
+        if self.frame_length[self.draw_current] <= self.terminal_draw_height:
+            pass
+        elif self.glued_to_bottom:
+            self.y_top_line = self.frame_length[self.draw_current] - self.terminal_draw_height
+        elif self.draw_move < 0:
             self.y_top_line += self.draw_move
+            self.y_top_line = max(0, self.y_top_line)
+        elif self.draw_move > 0:
             self.y_top_line += self.draw_move
+            self.y_top_line = min(self.frame_length[self.draw_current] - self.terminal_draw_height, self.y_top_line)
+            pass
 
         self.draw_move = 0
-
-    # def move_window(self):
-    #     self.get_terminal_size()
-    #     direction = self.event[1]
-    #     amount = self.event[2]
-    #
-    #     if direction == "down":
-    #         if amount == "one":
-    #             self.draw_move = 1
-    #         elif amount == "page":
-    #             self.draw_move = self.terminal_draw_height
-    #         elif amount == "half":
-    #             self.draw_move = int(self.terminal_draw_height/2)
-    #         elif amount == "bottom":
-    #             self.glued_to_bottom = True
-    #
-    #     if direction == "up":
-    #         self.glued_to_bottom = False
-    #         if amount == "one":
-    #             self.draw_move = -1
-    #         elif amount == "half":
-    #             self.draw_move = -int(self.terminal_draw_height/2)
-    #         elif amount == "page":
-    #             self.draw_move = -self.terminal_draw_height
-    #         elif amount == "top":
-    #             self.y_top_line = 0
-    #             self.y_top_sub = 0
-    #
-    #     self.draw_live_frame()
 
     def line_wrap(self):
         """
@@ -1048,7 +1028,7 @@ class FrameControllers(object):
         else:
 
             if self.line_wrap_disable:
-                self.no_line_wrap()
+                self.line_wrap_off()
             else:
                 self.line_wrap()
 
