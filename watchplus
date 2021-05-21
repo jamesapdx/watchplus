@@ -216,13 +216,15 @@ def store_args_in_settings(system_args, commands_assigned, commands_unassigned):
     for count, command in enumerate(commands_assigned):
         if command:
             Settings.commands[count] = vars(command)["\"cmd\""]
+            Settings.commands_assigned.append(command.print)
+            Settings._frame_controller_seeds[count] = FrameControllers()
             Settings.bottom_bar_label[count] = "".join([x for x in Settings.commands[count] if x in Settings.printable])
+            Settings.window_ids.append(count)
             Settings.streaming[count] = command.streaming
             Settings.glue_bottom[count] = command.glue_bottom
             Settings.no_change[count] = command.no_change
-            Settings.window_ids.append(count)
-            Settings.commands_assigned.append(command.print)
-            Settings._frame_controller_seeds[count] = FrameControllers()
+            Settings.no_line_wrap[count] = command.no_line_wrap
+            Settings.green_text[count] = command.green_text
     Settings.start_window_id = Settings.window_ids[0]
     for command in enumerate(commands_unassigned):
         Settings.commands_unassigned.append(command.print)
@@ -311,6 +313,8 @@ def add_command_args(parser):
                        help="Do not display change history. Can be toggled on/off with 'x'.")
     group.add_argument("-l", "--line_wrap", dest="no_line_wrap", action="store_true",
                        help="Disable line wrap. Can be toggled on/off with 'l'.")
+    group.add_argument("-g", "--green", dest="green_text", action="store_true",
+                       help="Use green text.")
     group.add_argument("-t", "--tab", dest="tab", type=int, metavar="<t>",
                        help="Assign this command to tab <t> if possible, 1-{}.\n".format(MAX_COMMANDS))
     group.add_argument("\"cmd\"", help="Command to be run, up to {} allowed, each in in a separate tab.\n"
@@ -330,6 +334,8 @@ class Settings(object):
     glue_bottom = [False] * MAX_TABS
     no_change = [False] * MAX_TABS
     no_line_wrap = [False] * MAX_TABS
+    green_text = [False] * MAX_TABS
+    random_text_colors = [False] * MAX_TABS
 
     # general and system settings
     window_ids = []
@@ -437,7 +443,6 @@ class FrameControllers(object):
         "lines_lengths",
         "frame_length",
         "frame_state",
-        "heatmap_state",
         "frame_date_time",
         "current",
         "new",
@@ -480,7 +485,6 @@ class FrameControllers(object):
         self.lines_lengths = []
         self.frame_length = []
         self.frame_state = []
-        self.heatmap_state = []
         self.frame_date_time = []
         self.current = - 1
         self.new = -1
@@ -543,6 +547,7 @@ class FrameControllers(object):
             self.glued_to_bottom = True if self.streaming or Settings.glue_bottom[window_id] else False
             self.no_change = Settings.no_change[window_id]
             self.no_line_wrap = Settings.no_line_wrap[window_id]
+            self.green_text = Settings.green_text[window_id]
 
             # init
             self.common_init()
@@ -610,7 +615,6 @@ class FrameControllers(object):
         # frames and heatmaps are stored in lists, so just append a new blank element to the fields
         self.frame_length.append(0)
         self.frame_state.append("waiting")
-        self.heatmap_state.append("waiting")
         self.frame_date_time.append(0)
         self.new = len(self.frame_state) - 1
 
@@ -757,14 +761,7 @@ class FrameControllers(object):
         self.draw_live_frame()
 
     def clear_history(self):
-        # TODO test and fix
-        # self.heatmap_type = normal, first, full, refresh, ignore, noheatmap
-        for counter in range(self.draw_current, len(self.frame_state)):
-            if self.heatmap_state[counter] == "refresh":
-                break
-            self.heatmap_state[counter] = "nohistory"
-        if self.heatmap_state[counter] != "refresh":
-            self.next_heatmap_type = "refresh"
+        # TODO clear history
         self.draw_live_frame()
 
     def draw_initialize_window(self):
@@ -773,6 +770,8 @@ class FrameControllers(object):
             self.window = curses.newwin(0, 0)
             self.window.nodelay(1)
             self.window.keypad(True)
+            self.window.idcok(False)
+            self.window.idlok(False)
 
     def window_change(self):
         self.draw_window_id = self.event[1]
@@ -936,6 +935,9 @@ class FrameControllers(object):
 
         Handle window moving here, using self.draw_move = +- lines
         """
+        if self.window_id != self.draw_window_id:
+            return
+
         draw_current = self.draw_current
         if self.current == self.draw_current:
             live = True
@@ -1033,7 +1035,7 @@ class FrameControllers(object):
         if self.window_id != self.draw_window_id:
             return
 
-        self.window.clear()
+        Debug.debug_to_file(str(self.window_id) + ":" + str(self.draw_current))
 
         # use this for status bar
         self.draw_height_adder = 1
@@ -1064,6 +1066,9 @@ class FrameControllers(object):
             draw_end = min(self.frame_length[draw_current], self.y_top_line + self.terminal_draw_height)
             live = True if draw_current == self.current else False
 
+            # # using .clear() cause screen flicker.  Use erase() with redrawwin() and refresh()
+            self.window.erase()
+
             try:
                 for line_number in range(draw_start, draw_end):
 
@@ -1089,9 +1094,10 @@ class FrameControllers(object):
                     line_state = self.lines_states[line_number][position]
 
                     # line_state: 0 no change, 1 line change on existing line, 2 change on new line
+                    color_text = 4 if self.green_text else 0
                     if line_state == 0 or self.no_change:
                         # no change on "pointed to" line, or display changes turned off
-                        self.window.addstr(line[line_start:], curses.color_pair(0))
+                        self.window.addstr(line[line_start:], curses.color_pair(color_text))
                     elif line_state == 2:
                         # change on new a new line (longer than previous output)
                         if pointer == draw_current:
@@ -1116,7 +1122,7 @@ class FrameControllers(object):
                             pointer = self.lines_chars_pointers[line_number][column][position]
 
                             try:
-                                color = 0
+                                color = color_text
                                 if pointer == 0:
                                     # the first frame, so no change
                                     pass
@@ -1151,6 +1157,7 @@ class FrameControllers(object):
         self.window.addstr(line_number, column, " ", color_pair)
         self.window.insstr(line_number, column, " ", color_pair)
 
+        self.window.redrawwin()
         self.window.refresh()
 
     def build_status_bar(self, draw_start=-1, draw_end=0, frame_height=0):
@@ -1233,7 +1240,6 @@ class FrameControllersStatic(FrameControllers):
     def start_new_frame(self):
         self.frame_length.append(0)
         self.frame_state.append("unchanged")
-        self.heatmap_state.append("unchanged")
         self.frame_date_time.append(self.event[2])
         self.event_frame_count = self.event[4]
 
@@ -1276,7 +1282,6 @@ class FrameControllersStatic(FrameControllers):
                     self.lines_chars_pointers.append([[0] for x in range(line_length)])
 
             self.frame_state[self.new] = "first"
-            self.heatmap_state[self.new] = "first"
             self.frame_length[self.new] = len(self.lines)
         else:
             # expects the length to be the same even if there are no changes
@@ -1923,11 +1928,22 @@ class Main(object):
         curses.start_color()
         cls.curses_color_setup()
 
+    # @classmethod
+    # def draw_initialize_window(cls):
+    #     # create a new curses window
+    #     if Debug.debug_text_only is False:
+    #         cls.window = curses.newwin(0, 0)
+    #         cls.window.nodelay(1)
+    #         cls.window.keypad(True)
+    #         # cls.window.idcok(False)
+    #         # cls.window.idlok(False)
+
     @staticmethod
     def curses_color_setup():
         curses.init_pair(1, curses.COLOR_BLACK, curses.COLOR_YELLOW)
         curses.init_pair(2, curses.COLOR_BLACK, curses.COLOR_RED)
         curses.init_pair(3, curses.COLOR_BLACK, curses.COLOR_BLUE)
+        curses.init_pair(4, curses.COLOR_GREEN, curses.COLOR_BLACK)
         curses.init_pair(31, curses.COLOR_BLACK, curses.COLOR_GREEN)
         curses.init_pair(32, curses.COLOR_BLACK, curses.COLOR_CYAN)
         curses.init_pair(33, curses.COLOR_BLACK, curses.COLOR_YELLOW)
