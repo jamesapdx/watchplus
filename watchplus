@@ -168,13 +168,16 @@ def assign_commands_to_tabs(command_args):
         tab = command.tab
         if tab and tab > 0 and tab <= MAX_COMMANDS:
             if not commands_assigned[tab - 1]:
+                command.tab_label = tab_text[tab]
                 commands_assigned[tab - 1] = command
                 continue
         commands_temp.append(command)
 
+    # add remaining to assigned and unassigned as argparse.Namespace
     for command in commands_temp:
         for count, tab in enumerate(commands_assigned):
             if not tab:
+                command.tab_label = tab_text[count + 1]
                 commands_assigned[count] = command
                 break
         else:
@@ -218,6 +221,7 @@ def store_args_in_settings(system_args, commands_assigned, commands_unassigned):
             Settings.commands[count] = vars(command)["\"cmd\""]
             Settings.commands_assigned.append(command.print)
             Settings._frame_controller_seeds[count] = FrameControllers()
+            Settings.bottom_bar_tab_label[count] = command.tab_label
             Settings.bottom_bar_label[count] = "".join([x for x in Settings.commands[count] if x in Settings.printable])
             Settings.window_ids.append(count)
             Settings.streaming[count] = command.streaming
@@ -241,7 +245,10 @@ def print_help(stdout=True):
         return parser.format_help()
 
 def init_system_parser():
-    terminal_width = int(run_linux("tput cols")[0])
+    try:
+        terminal_width = int(run_linux("tput cols")[0])
+    except ValueError:
+        terminal_width = 120
     format_func = lambda prog: argparse.RawTextHelpFormatter(prog, width=terminal_width - 2, max_help_position=32)
     usage = "%(prog)s [-o <f>] | [-f <f>] | [sys options] [cmd options] \"cmd\" [ -- [cmd options] \"cmd\" ]..."
     description = "%(prog)s - a better watch. Featuring pause, rewind and forward, scrolling up and down, line " \
@@ -328,6 +335,7 @@ class Settings(object):
     _frame_controller_seeds = [None] * MAX_TABS
     commands_assigned = [None]
     commands_unassigned = []
+    bottom_bar_tab_label =  [None] * MAX_TABS
     bottom_bar_label = [None] * MAX_TABS
     text = [None] * MAX_TABS
     streaming = [False] * MAX_TABS
@@ -356,6 +364,7 @@ class Settings(object):
             cls.window_ids.append(cls.window_id_help)
         cls.text[cls.window_id_help] = print_help(stdout=False)
         cls.commands[cls.window_id_help] = "Help Screen"
+        cls.bottom_bar_tab_label[cls.window_id_help] = "ctrl-h"
         cls.bottom_bar_label[cls.window_id_help] = "Help Screen"
         cls._frame_controller_seeds[cls.window_id_help] = FrameControllersHelp()
         cls.no_line_wrap[cls.window_id_help] = False
@@ -385,17 +394,9 @@ class Debug():
     debug_event_controller = False
 
     debug_file = "debug"
-    debug_file_clear = True
 
     @classmethod
     def debug_to_file(cls, *message):
-        if cls.debug_file_clear:
-            try:
-                os.remove(cls.debug_file)
-            except:
-                pass
-            cls.debug_file_clear = False
-
         # enhance: change this to logging
         with open(cls.debug_file, "a") as f:
             for item in message:
@@ -452,13 +453,14 @@ class FrameControllers(object):
     def __setstate__(self, state):
         self.__dict__.update(state)
 
-    def common_init(self):
+    def init_common(self):
         self.event = None
         self.max_line_length = Settings.max_line_length
         self.max_line_length_message = " ...MAX LINE LENGTH EXCEEDED ({})!!".format(self.max_line_length)
         self.max_line_length_total = len(self.max_line_length_message) + self.max_line_length
 
-        # window fields
+        # tab fields
+        self.tab_active_tab = False
         self.draw_height_adder = 0
         self.draw_width_adder = 0
         self.terminal_draw_height = 0
@@ -469,13 +471,13 @@ class FrameControllers(object):
         self.y_top_line = 0
         self.y_top_num_wrapped_lines = 0
         self.draw_move = 0
-        self.resize = 0
+        # non-live playback is a always 1 second.
+        self.playback_speed = 1
         self.next_playback = 0
-        self.playback_speed = 1.0
         self.next_frame_type = "first"
         self.next_heatmap_type = "first"
 
-    def frame_init(self):
+    def init_frame(self):
         # frame fields
         self.lines_chars = []
         self.lines_chars_pointers = []
@@ -487,30 +489,54 @@ class FrameControllers(object):
         self.frame_state = []
         self.frame_date_time = []
         self.current = - 1
-        self.new = -1
 
         self.draw_current = -2
-        self.draw_state = "play"
+        self.draw_state = "stop"
         self.recording_state = "record"
 
-    def event_init(self):
+    def init_start_tab(self):
+        if self.window_id == Settings.start_window_id:
+            self.tab_active_tab = True
+            self.draw_state = "live"
+
+    def init_curses_window(self):
+        # create a new curses window
+        if Debug.debug_text_only is False:
+            # standard settings
+            self.window = curses.newwin(0, 0)
+            self.window.nodelay(1)
+            self.window.keypad(True)
+            # these two might help with screen flicker
+            self.window.idcok(False)
+            self.window.idlok(False)
+            self.window.erase()
+            # curses needs an initial write or it draws the first frame with artifacts
+            for x in range(200):
+                self.window.addstr(" ")
+            self.window.redrawwin()
+            self.window.refresh()
+
+    def init_event(self):
         self.event_choices = {
-            "start new frame": self.start_new_frame,  # comes from event controller self.event_queue
-            "new frame": self.received_new_frame_notice_from_generator,      # comes from frame generator self.event_queue
-            "window change": self.window_change,
-            "refresh": self.draw_refresh,
+            # frames
+            "start new frame": self.new_frame_request,  # comes from event controller self.event_queue
+            "new frame": self.new_frame_received,  # comes from frame generator self.event_queue
+            # windows
+            "tab change": self.change_tabs,
+            "refresh": self.draw_live_frame,
             "back": self.frames_back,
             "forward": self.frames_forward,
             "window move": self.move_window_up_down,
+            # toggle items
             "toggle draw state": self.toggle_draw_state,
             "toggle recording": self.toggle_recording,
             "toggle line wrap": self.toggle_line_warp,
-            "playback speed": self.set_playback_speed,
             "toggle change": self.toggle_change,
             "clear history": self.clear_history,
+            # save
             "save": self.write_to_file}
 
-    def initialize_generator_childprocess(self):
+    def init_generator_childprocess(self):
         self.process_generator = None
         self.generator_seed = FrameGenerators()
         self.generator_frame_queue = multiprocessing.Queue(0)
@@ -534,14 +560,15 @@ class FrameControllers(object):
                 generator.new_frame --> | frame_queue  | --> self.frame  (the frame itself
             """
         try:
+            # init settings
             self.command = Settings.commands[window_id]
             self.window_id = window_id
             self.event_queue = event_queue
             self.system_queue = system_queue
             self.frame_draw_current_queue = frame_draw_current_queue
             self.frame_draw_state_queue = frame_draw_state_queue
+            self.bottom_bar_tab_label = Settings.bottom_bar_tab_label[window_id]
             self.bottom_bar_label = Settings.bottom_bar_label[window_id]
-            self.draw_window_id = Settings.start_window_id
             self.interval = Settings.interval
             self.streaming = Settings.streaming[window_id]
             self.glued_to_bottom = True if self.streaming or Settings.glue_bottom[window_id] else False
@@ -550,13 +577,14 @@ class FrameControllers(object):
             self.green_text = Settings.green_text[window_id]
 
             # init
-            self.common_init()
-            self.frame_init()
-            self.event_init()
-            self.initialize_generator_childprocess()
+            self.init_common()
+            self.init_frame()
+            self.init_start_tab()
+            self.init_event()
+            self.init_generator_childprocess()
 
             # get windows ready
-            self.draw_initialize_window()
+            self.init_curses_window()
             self.get_terminal_size()
 
             # tell event controller we are ready to go
@@ -568,74 +596,62 @@ class FrameControllers(object):
         except:
             terminate_processes()
 
-        # self.system_queue.put(2)
-
     def main_loop(self):
         timeout = min(.02, self.interval * .2)
         while True:
             # self.event expects a list, sent by another process
             try:
-                # self.event is a list, [0] is the command, [1+] is options
+                # self.event is a list, [0] is the command, [1+] is options, see self.event_choices above
                 self.event = self.event_queue.get(block=True, timeout=timeout)
 
             except multiprocessing.queues.Empty:
                 self.playback_interval()
-                self.draw_after_resize()
             else:
                 # run the appropriate self.event_choices function
-                # an event can be from the event controller (new frame or keystrokes) or from child generator
+                # an event can be from the event controller (new frame or keystrokes) or from child generator (new frame)
                 self.event_choices.get(self.event[0], "")()
 
     # PROCESS FRAMES ######################
 
-    def start_new_frame(self):
-        # the event controller tells all tabs it's time for a new event
-        self.new_empty_frame()
-
+    def new_frame_request(self):
+        # the event controller process tells all tabs it's time for a new event
         self.new_stop_time = self.event[1]
-        self.frame_date_time[self.new] = self.event[2]
+        self.new_start_time = self.event[2]
         self.precision = self.event[3]
-        self.event_frame_count = self.event[4]
 
         if len(self.frame_state) == 1:
             self.next_frame_type = "first"
             self.precision = False
 
-        self.current = len(self.frame_state) - 2
-        # if self.current >= 0:
-        #     if self.frame_state[self.current] == "waiting":
-        #         self.frame_state[self.new] = "dropped"
-        #         self.frame_length[self.new] = 0
-
-        self.request_new_frame_from_generator()
-        self.playback_new_frame()
-        self.draw_live_frame()
-
-    def new_empty_frame(self):
-        # frames and heatmaps are stored in lists, so just append a new blank element to the fields
-        self.frame_length.append(0)
-        self.frame_state.append("waiting")
-        self.frame_date_time.append(0)
-        self.new = len(self.frame_state) - 1
-
-    def request_new_frame_from_generator(self):
+        # request new frame from the child generator
         try:
-            # tell the child generator to run the command and make us a new frame
-            self.generator_event_queue.put([self.next_frame_type, self.new_stop_time, self.precision], timeout=Settings.timeout)
+            self.generator_event_queue.put([self.next_frame_type,
+                                            self.new_stop_time,
+                                            self.precision,
+                                            self.terminal_draw_width], timeout=Settings.timeout)
             self.next_frame_type = "normal"
         except multiprocessing.queues.Full:
             pass
 
-    def received_new_frame_notice_from_generator(self):
-        self.frame_state[self.new] = self.event[1]
-        self.frame_length[self.new] = self.event[2]
-        time.sleep(.001)
-        self.get_and_store_frame()
+    def new_frame_received(self):
+        self.new_frame_store()
+
+        if self.draw_state == "live":
+            self.draw_current = self.current
+
+        self.draw_live_frame()
+        # tell the event controller we are done adding a new frame
         self.system_queue.put(1)
 
-    def get_and_store_frame(self):
-        new = self.new
-        previous = max(0, self.new - 1)
+    def new_frame_store(self):
+        self.frame_state.append(self.event[1])
+        self.frame_length.append(self.event[2])
+        self.frame_date_time.append(self.new_start_time)
+
+        self.current = len(self.frame_state) - 1
+
+        new = self.current
+        previous = max(0, new - 1)
 
         try:
             frame_changes, frame_line_numbers = self.generator_frame_queue.get(block=True, timeout=Settings.timeout)
@@ -722,12 +738,15 @@ class FrameControllers(object):
                                     self.lines_chars[line_number][column].append(char)
                                     self.lines_chars_pointers[line_number][column].append(new)
 
-    # DRAW FRAMES ######################
+    # TOGGLE ITEMS ######################
 
     def toggle_recording(self):
         self.recording_state = self.event[1]
         if self.recording_state == "record":
-            self.draw_state = "play"
+            if self.current == self.draw_current:
+                self.draw_state = "live"
+            else:
+                self.draw_state = "pause"
         else:
             self.draw_state = "pause"
             if self.streaming:
@@ -754,37 +773,49 @@ class FrameControllers(object):
         self.draw_live_frame()
 
     def toggle_draw_state(self):
-        if self.draw_state == "play":
+        if self.draw_state == "play" or self.draw_state == "live":
             self.draw_state = "pause"
         else:
-            self.draw_state = "play"
+            if self.draw_current == self.current:
+                self.draw_state = "live"
+            else:
+                self.draw_state = "play"
         self.draw_live_frame()
 
     def clear_history(self):
         # TODO clear history
         self.draw_live_frame()
 
-    def draw_initialize_window(self):
-        # create a new curses window
-        if Debug.debug_text_only is False:
-            self.window = curses.newwin(0, 0)
-            self.window.nodelay(1)
-            self.window.keypad(True)
-            self.window.idcok(False)
-            self.window.idlok(False)
+    # DRAW FRAMES ######################
 
-    def window_change(self):
-        self.draw_window_id = self.event[1]
+    def change_tabs(self):
         if self.event[2] == "new":
+            # moving to this tab
+            self.tab_active_tab = True
+
+            # 0 = latest, otherwise use draw_frame
             self.draw_current = self.frame_draw_current_queue.value
-            self.draw_state = "play" if self.frame_draw_state_queue.value else "pause"
+            self.draw_state = {0: "stop", 1: "play", 2: "live"}[self.frame_draw_state_queue.value]
+            if self.draw_state == "play":
+                self.next_playback = timeit.default_timer() + (self.playback_speed * self.interval)
+            elif self.draw_state == "live":
+                self.draw_current = self.current
+
             self.draw_live_frame()
         else:
+            # moving from this tab, pass items in the queue to the new tab
+            self.tab_active_tab = False
             self.frame_draw_current_queue.value = self.draw_current
-            self.frame_draw_state_queue.value = 1 if self.draw_state == "play" else 0
+            self.frame_draw_state_queue.value = {"stop": 0, "play": 1, "live": 2}[self.draw_state]
+            # self.window.erase()
+            # self.window.redrawwin()
+            self.window.refresh()
 
     def playback_interval(self):
-        if self.window_id != self.draw_window_id:
+        # remove
+        if True:
+            return
+        if self.draw_current == self.current:
             return
         elif self.draw_state == "pause":
             return
@@ -797,65 +828,23 @@ class FrameControllers(object):
         elif self.playback_speed == 1:
             return
         self.next_playback = timeit.default_timer() + (self.playback_speed * self.interval)
-        self.draw_current += 1
-        self.frame_draw_current_queue.value = self.draw_current
-        self.frame_draw_state_queue.value = 1 if self.draw_state == "play" else 0
+        # self.draw_current += 1
         self.draw_live_frame()
 
-    def playback_new_frame(self):
-        if self.window_id != self.draw_window_id:
-            return
-        elif self.recording_state == "stop":
-            return
-        elif self.playback_speed != 1:
-            pass
-        elif self.draw_state == "play":
-            self.draw_current += 1
-        self.frame_draw_current_queue.value = self.draw_current
-        self.frame_draw_state_queue.value = 1 if self.draw_state == "play" else 0
-
-    def set_playback_speed(self):
-        # TODO enhance: finish this.  make global to all frame controllers
-        return
-
-        # speed = self.event[1]
-        # if speed == "slower":
-        #     if self.playback_speed == 4.0:
-        #         pass
-        #     self.playback_speed *= 2.0
-        # if speed == "faster":
-        #     if self.playback_speed == 1.0 and self.interval <= .1:
-        #         pass
-        #     if self.playback_speed == .25:
-        #         pass
-        #     self.playback_speed /= 2.0
-
     def get_terminal_size(self):
+        # height = self.terminal_height
+        # width = self.terminal_width
+
+        # need to refresh before getting size
+        self.window.refresh()
+        self.terminal_height, self.terminal_width = self.window.getmaxyx()
+
         self.terminal_draw_height = self.terminal_height - self.draw_height_adder
         self.terminal_draw_width = self.terminal_width - self.draw_width_adder
 
-        height = self.terminal_height
-        width = self.terminal_width
-
-        self.terminal_height, self.terminal_width = self.window.getmaxyx()
-
-        if height != self.terminal_height or width != self.terminal_width:
-            self.window.resize(self.terminal_height, self.terminal_width)
-            # curses doesn't redraw well, use self.resize to force a few extra redraw loops
-            self.resize = 5
-            return True
-
-    def draw_after_resize(self):
-        if self.resize in (2, 4):
-            # this is because curses is buggy on window resize and we need to redraw several times
-            # whenever there is window resize event
-            self.resize -= 1
-            self.draw_live_frame()
-        else:
-            self.resize -= 1
-
-    def draw_refresh(self):
-        self.draw_live_frame()
+        # this seems to be unnecessary, take out later
+        # if height != self.terminal_height or width != self.terminal_width:
+        #     self.window.resize(self.terminal_height, self.terminal_width)
 
     def frames_back(self):
         amount = self.event[1]
@@ -873,7 +862,7 @@ class FrameControllers(object):
         else:
             self.draw_current = min(self.current, self.draw_current + amount)
         if self.draw_current == self.current:
-            self.draw_state = "play"
+            self.draw_state = "live"
         else:
             self.draw_state = "pause"
         self.draw_live_frame()
@@ -922,7 +911,6 @@ class FrameControllers(object):
         elif self.draw_move > 0:
             self.y_top_line += self.draw_move
             self.y_top_line = min(self.frame_length[self.draw_current] - self.terminal_draw_height, self.y_top_line)
-            pass
 
         self.draw_move = 0
 
@@ -935,9 +923,6 @@ class FrameControllers(object):
 
         Handle window moving here, using self.draw_move = +- lines
         """
-        if self.window_id != self.draw_window_id:
-            return
-
         draw_current = self.draw_current
         if self.current == self.draw_current:
             live = True
@@ -1032,10 +1017,8 @@ class FrameControllers(object):
         self.draw_move = 0
 
     def draw_live_frame(self):
-        if self.window_id != self.draw_window_id:
+        if not self.tab_active_tab:
             return
-
-        Debug.debug_to_file(str(self.window_id) + ":" + str(self.draw_current))
 
         # use this for status bar
         self.draw_height_adder = 1
@@ -1045,16 +1028,19 @@ class FrameControllers(object):
 
         draw_current = self.draw_current
 
+        # # using .clear() cause screen flicker.  Use erase() with redrawwin() and refresh()
+        self.window.erase()
+
         if self.current < 0 or len(self.frame_state) == 0:
-            status_bar, color_pair = self.build_status_bar()
+            status_bar, color_pair = self.status_bar_build()
         elif self.frame_state[draw_current] == "dropped":
             if self.precision is True:
                 self.window.addstr("Command could not complete in time, frame dropped.")
             else:
                 self.window.addstr("Error processing frame, frame dropped.")
-            status_bar, color_pair = self.build_status_bar()
+            status_bar, color_pair = self.status_bar_build()
         elif self.frame_length[draw_current] == 0:
-            status_bar, color_pair = self.build_status_bar()
+            status_bar, color_pair = self.status_bar_build()
         else:
 
             if self.no_line_wrap:
@@ -1066,12 +1052,8 @@ class FrameControllers(object):
             draw_end = min(self.frame_length[draw_current], self.y_top_line + self.terminal_draw_height)
             live = True if draw_current == self.current else False
 
-            # # using .clear() cause screen flicker.  Use erase() with redrawwin() and refresh()
-            self.window.erase()
-
             try:
                 for line_number in range(draw_start, draw_end):
-
                     # we don't stare the same line over an over, we just store it once and retrieve the pointer
                     # to that line.  we need bisect to find last closet pointer to the frame
                     # we are drawing (draw_current). if we are live than we can just grab the last pointer at [-1]
@@ -1143,12 +1125,12 @@ class FrameControllers(object):
             except curses.error:
                 pass
 
-            status_bar, color_pair = self.build_status_bar(draw_start, draw_end, self.frame_length[draw_current])
+            status_bar, color_pair = self.status_bar_build(draw_start, draw_end, self.frame_length[draw_current])
 
         # draw status bar to curses
         line_number = self.terminal_height - 1
         for column in range(self.terminal_width - 1):
-            # need the -1 because of a bug in curses, it sticks a \n on the end of the last line
+            # need the terminal_width -1 because of a curses bug, it sticks a \n on the end of the last line
             try:
                 char = str(status_bar[column])
             except IndexError:
@@ -1160,23 +1142,24 @@ class FrameControllers(object):
         self.window.redrawwin()
         self.window.refresh()
 
-    def build_status_bar(self, draw_start=-1, draw_end=0, frame_height=0):
-        if len(self.frame_state) == 0:
-            date_time = "  :  :  .   "
-        elif self.current < 0:
-            date_time = self.frame_date_time[self.current + 1].strftime("%H:%M:%S.%f")
-        else:
+    def status_bar_build(self, draw_start=-1, draw_end=0, frame_height=0):
+        try:
             date_time = self.frame_date_time[self.draw_current].strftime("%H:%M:%S.%f")
+        except (AttributeError, IndexError):
+            date_time = "--:--:--.---"
+
+        # TODO stuck tab
 
         mode_text = {
-            "waiting"      : ["Waiting for first frame", curses.color_pair(31)],
-            "paused"       : ["|| PAUSED  ", curses.color_pair(33)],
+            "waiting"      : ["Waiting", curses.color_pair(31)],
             "paused stop"  : ["|| PAUSED  ", curses.color_pair(34)],
+            "paused"       : ["|| PAUSED  ", curses.color_pair(33)],
             "playback"     : [">> PLAYBACK", curses.color_pair(32)],
-            "live play"    : ["<> LIVE    ", curses.color_pair(31)],
             "live stop"    : ["<> LIVE    ", curses.color_pair(34)],
-            "recording"    : [" (STOPPED)", ""],
-            "not recording": ["", ""],
+            "live play"    : ["<> LIVE    ", curses.color_pair(31)],
+            "stopped"      : [" (STOPPED) ", ""],
+            "stuck"        : ["TAB X STUCK", curses.color_pair(34)],
+            "other"        : ["", ""],
         }
 
         if self.current < 0:
@@ -1185,21 +1168,19 @@ class FrameControllers(object):
             mode = "paused stop"
         elif self.draw_state == "pause":
             mode = "paused"
-        elif self.draw_current < self.current:
+        elif self.draw_state == "play":
             mode = "playback"
         elif self.draw_state == "play" and self.recording_state == "stop":
             mode = "live stop"
-        elif self.draw_state == "play":
+        elif self.draw_state == "live":
             mode = "live play"
-
         if self.recording_state == "stop":
-            recording_mode = "recording"
+            recording_mode = "stopped"
         else:
-            recording_mode = "not recording"
+            recording_mode = "other"
 
-        p = " {:>2} | {:.12} | {} |{} {}/{} ( {}-{}/{} Lines ) | {}"
+        p = " {:>2} | {:.12} | {} {}/{} ( {}-{}/{} Lines ) | CH:{:3} LW:{:3} n:{:3} p:{} | TAB {}: {}"
         status_bar = p.format(
-            self.draw_window_id + 1,
             date_time,
             mode_text[mode][0],
             mode_text[recording_mode][0],
@@ -1208,7 +1189,13 @@ class FrameControllers(object):
             max(0, draw_start + 1),
             max(0, min(draw_end, frame_height)),
             frame_height,
+            "OFF" if self.no_change else "ON",
+            "OFF" if self.no_line_wrap else "ON",
+            self.interval,
+            "ON" if self.precision else "OFF",
+            self.bottom_bar_tab_label,
             self.bottom_bar_label)
+
         return status_bar, mode_text[mode][1]
 
     def write_to_file(self):
@@ -1234,37 +1221,29 @@ class FrameControllersStatic(FrameControllers):
     Run or display once and not again. use self.get_output() to control first frame output
     """
 
-    def initialize_generator_childprocess(self):
+    def init_generator_childprocess(self):
         pass
 
-    def start_new_frame(self):
-        self.frame_length.append(0)
-        self.frame_state.append("unchanged")
-        self.frame_date_time.append(self.event[2])
-        self.event_frame_count = self.event[4]
+    def new_frame_request(self):
+        self.new_frame_store()
 
-        self.new = len(self.frame_state) - 1
-        self.current = len(self.frame_state) - 2
-
-        self.get_and_store_frame()
-
-        time.sleep(.001)
         self.system_queue.put(1)
 
-        self.playback_new_frame()
+        if self.draw_state == "live":
+            self.draw_current = self.current
+
         self.draw_live_frame()
 
-    def new_empty_frame(self):
+    def new_frame_received(self):
         pass
 
-    def request_new_frame_from_generator(self):
-        pass
+    def new_frame_store(self):
+        self.frame_state.append("unchanged")
+        self.frame_date_time.append(self.event[2])
 
-    def received_new_frame_notice_from_generator(self):
-        pass
+        self.current = len(self.frame_state) - 1
 
-    def get_and_store_frame(self):
-        if len(self.frame_state) == 1:
+        if self.current == 0:
 
             frame = self.get_output()
 
@@ -1281,14 +1260,14 @@ class FrameControllersStatic(FrameControllers):
                     self.lines_chars.append([[] for x in range(line_length)])
                     self.lines_chars_pointers.append([[0] for x in range(line_length)])
 
-            self.frame_state[self.new] = "first"
-            self.frame_length[self.new] = len(self.lines)
+            self.frame_state[self.current] = ("first")
+            self.frame_length.append(len(self.lines))
         else:
             # expects the length to be the same even if there are no changes
-            self.frame_length[self.new] = self.frame_length[0]
+            self.frame_length.append(self.frame_length[0])
 
     def get_output(self):
-        # return any list of strings
+        # return any list of strings, this will be the first frame
         frame = []
         return frame
 
@@ -1321,7 +1300,7 @@ class FrameControllersNoChange(FrameControllers):
 class FrameControllersSavedRun(FrameControllers):
     """TODO future home of saved runs"""
 
-    def frame_init(self):
+    def init_frame(self):
         self.draw_current = len(self.frame_state) - 1
         self.current = self.draw_current
         self.frame_draw_current_queue.value = self.draw_current
@@ -1329,7 +1308,7 @@ class FrameControllersSavedRun(FrameControllers):
         self.frame_draw_state_queue.value = 1 if self.draw_state == "play" else 0
         self.recording_state = "stop"
 
-    def initialize_generator_childprocess(self):
+    def init_generator_childprocess(self):
         pass
 
 
@@ -1351,6 +1330,7 @@ class FrameGenerators(object):
             self.frame_changes = []
             self.frame_length = [0, 0]
             self.frame_stream_length = 0
+            self.terminal_draw_width = 0
 
             self.command = command
             self.frame_queue = frame_queue
@@ -1376,6 +1356,7 @@ class FrameGenerators(object):
                 self.frame_type = self.generator_event[0]
                 self.stop_time = self.generator_event[1]
                 self.precision = self.generator_event[2]
+                self.terminal_draw_width = self.generator_event[3]
 
                 if self.frame_type == "pause":
                     self.recording_state = "pause"
@@ -1404,6 +1385,21 @@ class FrameGenerators(object):
             self.continue_gid(self.command_gid)
             self.terminate_gid(self.command_gid)
             terminate_processes()
+            # self.terminate_processes()
+
+    def terminate_processes(self):
+        # self.proc.wait()
+        # self.proc.terminate()
+        term_sig = 15
+        try:
+            os.killpg(os.getpgid(self.command_gid), term_sig)
+        except (TypeError, OSError):
+            pass
+        # term_sig = 9
+        # try:
+        #     os.killpg(os.getppid(self.command_gid), term_sig)
+        # except (TypeError, OSError):
+        #     pass
 
     def dropped(self):
         self.command_gid = 0
@@ -1437,8 +1433,7 @@ class FrameGenerators(object):
         self.frame_state = "dropped"
 
     def run_command(self):
-        terminal_width = str(int(run_linux("tput cols")[0]) - 2)
-        env = dict(os.environ, COLUMNS=terminal_width)
+        env = dict(os.environ, COLUMNS=str(self.terminal_draw_width))
 
         proc = subprocess.Popen(
             self.command,
@@ -1450,6 +1445,7 @@ class FrameGenerators(object):
             preexec_fn=os.setsid
         )
         self.command_gid = os.getpgid(proc.pid)
+        # self.command_ppid = os.getppid(proc.pid)
 
         return proc
 
@@ -1617,7 +1613,7 @@ class EventController(object):
     def __init__(self):
         self.key_mapping()
 
-    def event_controller(self, window, event_queues, system_queues, frame_count):
+    def event_controller(self, window, event_queues, system_queues):
         try:
             self.window = window
             self.draw_window_id = Settings.start_window_id
@@ -1629,13 +1625,10 @@ class EventController(object):
             self.new_stop_time = 0
             self.new_start_date_time = 0
             self.done_count = 0
-            self.event_frame_count = frame_count
             self.help = False
             self.last_tab = self.draw_window_id
-            if Settings.load_saved_run:
-                self.recording_state = "stop"
-            else:
-                self.recording_state = "record"
+            self.resize_request = 0
+            self.recording_state = "stop" if Settings.load_saved_run else "record"
 
             # start here
             while True:
@@ -1655,9 +1648,7 @@ class EventController(object):
                             event_queues[window_id].put(["start new frame",
                                                          self.new_stop_time,
                                                          self.new_start_date_time,
-                                                         self.precision,
-                                                         self.event_frame_count])
-                        self.event_frame_count += 1
+                                                         self.precision])
                     else:
                         for draw_window_id in self.draw_window_ids:
                             # collect "frame done" from the frame controllers
@@ -1666,6 +1657,14 @@ class EventController(object):
                                 self.done_count += 1 if x == 1 else 0
                             except multiprocessing.queues.Empty:
                                 pass
+
+                # when a window is resized, a lot of events are fired once. We will delay a bit.
+                if self.resize_request and timeit.default_timer() > self.resize_request:
+                    try:
+                        self.event_queues[self.draw_window_id].put(["refresh"], block=False)
+                        self.resize_request = 0
+                    except multiprocessing.queues.Full:
+                        pass
 
                 # look for a keyboard input now
                 self.keyboard_input()
@@ -1741,9 +1740,13 @@ class EventController(object):
 
         if raw_keystroke == curses.KEY_RESIZE:
             # window resize event occurred
-            self.event_queues[self.draw_window_id].put(("refresh",))
+            # when a window is resized, a lot of events are fired once. We will delay a bit.
+            # this also helps with redraw issues
+            wait_time = .3
+            self.resize_request = timeit.default_timer() + wait_time
 
         if self.draw_window_id == Settings.window_id_help:
+            # when resizing, a lot of events are generated at once. wait a bit before sending
             if raw_keystroke == 8 or raw_keystroke == 27:
                 # ctrl-h or [esc], toggle out of help. Fake a key press for the last tab
                 raw_keystroke = [key for key, w_id in self.tab_map.items() if w_id == self.last_tab][0]
@@ -1753,10 +1756,11 @@ class EventController(object):
             new_win = self.tab_map[raw_keystroke]
             if Settings.commands[new_win] and new_win != self.draw_window_id:
                 try:
-                    self.event_queues[self.draw_window_id].put(("window change", new_win, "close"), timeout=Settings.timeout)
+                    self.event_queues[self.draw_window_id].put(("tab change", new_win, "close"), timeout=Settings.timeout)
                     self.last_tab = self.draw_window_id
                     self.draw_window_id = new_win
-                    self.event_queues[self.draw_window_id].put(("window change", new_win, "new"), timeout=Settings.timeout)
+                    time.sleep(.1)
+                    self.event_queues[self.draw_window_id].put(("tab change", new_win, "new"), timeout=Settings.timeout)
                 except multiprocessing.queues.Full:
                     pass
 
@@ -1911,7 +1915,6 @@ def terminate_curses():
 class Main(object):
     event_queues = [None] * MAX_TABS
     system_queues = [None] * MAX_TABS
-    frame_count = 0
     frame_draw_current_queue = multiprocessing.Value("i", 0)
     frame_draw_state_queue = multiprocessing.Value("i", 0)
     process_frame_controllers = [None] * MAX_TABS
@@ -1927,16 +1930,6 @@ class Main(object):
         cls.stdscr.keypad(True)
         curses.start_color()
         cls.curses_color_setup()
-
-    # @classmethod
-    # def draw_initialize_window(cls):
-    #     # create a new curses window
-    #     if Debug.debug_text_only is False:
-    #         cls.window = curses.newwin(0, 0)
-    #         cls.window.nodelay(1)
-    #         cls.window.keypad(True)
-    #         # cls.window.idcok(False)
-    #         # cls.window.idlok(False)
 
     @staticmethod
     def curses_color_setup():
@@ -1981,8 +1974,7 @@ class Main(object):
             args=(
                 cls.stdscr,
                 cls.event_queues,
-                cls.system_queues,
-                cls.frame_count
+                cls.system_queues
             ))
         cls.process_event_controller.start()
         cls.process_event_controller.join()
@@ -2024,7 +2016,6 @@ class MainSavedRun(Main):
                     frame_controller_seed.__dict__.update(frame_controller.__dict__)
                     del frame_controller
 
-                    cls.frame_count = len(frame_controller.frame_state) - 1
                     cls.spawn_frame_controller(window_id, frame_controller)
                     del frame_controller_seed
 
