@@ -1,8 +1,8 @@
--n 1 
+-n 1
 -t 1 -x  "free; echo; free -h; echo; uptime; echo; top -b -n 1 -c -p $(pgrep -f watchplus | head -n 20 | paste -d, -s -)"
 -t 2     "date +%N; date; echo 'This is a test'"
 -b       "dmesg"               #1
--s       "ping 1.1.1.1"        #2
+-ls       "ping 1.1.1.1"        #2
          "ping -c1 1.1.1.1"    #3
          "ifconfig"
          "cat /proc/interrupts"
@@ -11,9 +11,9 @@
          "env"
          "echo -e 'abcgxz abc \n123456\n7890 !@#$&^'"
 -x       "nstat"
--t 11 -s -x -l "while true;do python -c 'import random;print(\"\".join(\" .*^~+o\"[random.choices(range(7),weights=[200]+[9]+[1]*5)[0]] for i in range(450)))';sleep 3;done"
--t 12 -s -x -l -g "while true;do python -c 'from random import *;l=\" |\\/\";print(\"\".join([l[randrange(len(l))]*randrange(10,40) for x in range(35)]))';sleep 1;done"
--t 13 -s -x -l -g "while true;do python -c 'import datetime as d,random as r;t=lambda :d.datetime.now();r.seed(t().hour);a=r.randrange(1,1e200);r.seed();print(\"\".join(\"    \"[:int(x)%3]+(\" \"[:t().minute%2]+chr(r.randrange(35,91))+\" \")[min(1,int(t().second/((int(x)+1)*6)))] for x in str(a)))';sleep .5;done"
+-t 11 -s -x -l "while true;do python -c 'import random;print(\"\".join(\" .*^~+o\"[random.choices(range(7),weights=[200]+[9]+[1]*5)[0]] for i in range(450)))';sleep 2;done"
+-t 12 -s -x -l -g "while true;do python -c 'from random import *;l=\" |\\/\";print(\"\".join([l[randrange(len(l))]*randint(10,40) for x in range(35)]))';sleep 1;done"
+-t 13 -s -x -l -g "while true;do python -c 'import datetime as d,random as r;t=lambda :d.datetime.now();r.seed(t().hour);a=r.randint(1,1e200);r.seed();print(\"\".join(\"    \"[:int(x)%3]+(\" \"[:t().minute%2]+chr(r.randint(35,91))+\" \")[min(1,int(t().second/((int(x)+1)*6)))] for x in str(a)))';sleep .5;done"
 
 #1  best to just use dmesg, not dmesg -w (follow). avoid using tail unless file size is large, use -b instead
 #2  this is a good example of when to use the -s for streaming. watchplus will let the command run and collect new output

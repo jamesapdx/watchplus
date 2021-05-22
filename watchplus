@@ -194,11 +194,12 @@ def assign_commands_to_tabs(command_args):
     return commands_assigned, commands_unassigned
 
 def print_commands(commands_assigned, commands_unassigned):
-    for command in commands_assigned:
-        if command:
+    if False:
+        for command in commands_assigned:
+            if command:
+                print(command.print)
+        for command in commands_unassigned:
             print(command.print)
-    for command in commands_unassigned:
-        print(command.print)
 
 def validate_args(system_args, commands_assigned):
     if not [c for c in commands_assigned if c]:
@@ -386,13 +387,6 @@ class Debug():
     """ Place Debug.debug_to_file(message, message, etc.) anywhere message will be output to debug_file.
     decorate a method with @Debug.debug_timer the time will be recorded to debug_file.
     """
-    debug_generator = True
-    debug_generator = False
-    debug_frame_controller = False
-    debug_text_only = True
-    debug_text_only = False
-    debug_event_controller = False
-
     debug_file = "debug"
 
     @classmethod
@@ -446,7 +440,6 @@ class FrameControllers(object):
         "frame_state",
         "frame_date_time",
         "current",
-        "new",
         "streaming"]
         return {var_name: self.__dict__[var_name] for var_name in self.__dict__ if var_name in includes}
 
@@ -501,20 +494,20 @@ class FrameControllers(object):
 
     def init_curses_window(self):
         # create a new curses window
-        if Debug.debug_text_only is False:
-            # standard settings
-            self.window = curses.newwin(0, 0)
-            self.window.nodelay(1)
-            self.window.keypad(True)
-            # these two might help with screen flicker
-            self.window.idcok(False)
-            self.window.idlok(False)
-            self.window.erase()
-            # curses needs an initial write or it draws the first frame with artifacts
-            for x in range(200):
-                self.window.addstr(" ")
-            self.window.redrawwin()
-            self.window.refresh()
+
+        # standard settings
+        self.window = curses.newwin(0, 0)
+        self.window.nodelay(1)
+        self.window.keypad(True)
+        # these two might help with screen flicker
+        self.window.idcok(False)
+        self.window.idlok(False)
+        self.window.erase()
+        # curses needs an initial write or it draws the first frame with artifacts
+        for x in range(200):
+            self.window.addstr(" ")
+        self.window.redrawwin()
+        self.window.refresh()
 
     def init_event(self):
         self.event_choices = {
@@ -605,7 +598,7 @@ class FrameControllers(object):
                 self.event = self.event_queue.get(block=True, timeout=timeout)
 
             except multiprocessing.queues.Empty:
-                self.playback_interval()
+                self.playback()
             else:
                 # run the appropriate self.event_choices function
                 # an event can be from the event controller (new frame or keystrokes) or from child generator (new frame)
@@ -619,7 +612,7 @@ class FrameControllers(object):
         self.new_start_time = self.event[2]
         self.precision = self.event[3]
 
-        if len(self.frame_state) == 1:
+        if len(self.frame_state) == 0:
             self.next_frame_type = "first"
             self.precision = False
 
@@ -751,7 +744,7 @@ class FrameControllers(object):
             self.draw_state = "pause"
             if self.streaming:
                 try:
-                    self.generator_event_queue.put(["pause", None, None],
+                    self.generator_event_queue.put(["pause", None, None, self.terminal_draw_width],
                                                    timeout=Settings.timeout)
                 except multiprocessing.queues.Full:
                     pass
@@ -780,6 +773,7 @@ class FrameControllers(object):
                 self.draw_state = "live"
             else:
                 self.draw_state = "play"
+                self.next_playback = timeit.default_timer() + self.playback_speed
         self.draw_live_frame()
 
     def clear_history(self):
@@ -795,9 +789,9 @@ class FrameControllers(object):
 
             # 0 = latest, otherwise use draw_frame
             self.draw_current = self.frame_draw_current_queue.value
-            self.draw_state = {0: "stop", 1: "play", 2: "live"}[self.frame_draw_state_queue.value]
+            self.draw_state = {0: "pause", 1: "play", 2: "live"}[self.frame_draw_state_queue.value]
             if self.draw_state == "play":
-                self.next_playback = timeit.default_timer() + (self.playback_speed * self.interval)
+                self.next_playback = timeit.default_timer() + self.playback_speed
             elif self.draw_state == "live":
                 self.draw_current = self.current
 
@@ -806,45 +800,26 @@ class FrameControllers(object):
             # moving from this tab, pass items in the queue to the new tab
             self.tab_active_tab = False
             self.frame_draw_current_queue.value = self.draw_current
-            self.frame_draw_state_queue.value = {"stop": 0, "play": 1, "live": 2}[self.draw_state]
+            self.frame_draw_state_queue.value = {"pause": 0, "play": 1, "live": 2}[self.draw_state]
             # self.window.erase()
             # self.window.redrawwin()
             self.window.refresh()
 
-    def playback_interval(self):
-        # remove
-        if True:
-            return
-        if self.draw_current == self.current:
-            return
-        elif self.draw_state == "pause":
-            return
-        elif self.draw_current == self.current:
-            return
-        elif timeit.default_timer() < self.next_playback:
-            return
-        elif self.recording_state == "stop":
-            pass
-        elif self.playback_speed == 1:
-            return
-        self.next_playback = timeit.default_timer() + (self.playback_speed * self.interval)
-        # self.draw_current += 1
-        self.draw_live_frame()
+    def playback(self):
+        if self.draw_state == "play" and timeit.default_timer() > self.next_playback:
+            self.draw_current +=1
+            if self.draw_current == self.current:
+                self.draw_state = "live"
+            self.draw_live_frame()
+            self.next_playback = timeit.default_timer() + self.playback_speed
 
     def get_terminal_size(self):
-        # height = self.terminal_height
-        # width = self.terminal_width
-
         # need to refresh before getting size
         self.window.refresh()
         self.terminal_height, self.terminal_width = self.window.getmaxyx()
 
         self.terminal_draw_height = self.terminal_height - self.draw_height_adder
         self.terminal_draw_width = self.terminal_width - self.draw_width_adder
-
-        # this seems to be unnecessary, take out later
-        # if height != self.terminal_height or width != self.terminal_width:
-        #     self.window.resize(self.terminal_height, self.terminal_width)
 
     def frames_back(self):
         amount = self.event[1]
@@ -1021,7 +996,7 @@ class FrameControllers(object):
             return
 
         # use this for status bar
-        self.draw_height_adder = 1
+        self.draw_height_adder = 3
         # use this for line numbers (future)
         self.draw_width_adder = 0
         self.get_terminal_size()
@@ -1385,21 +1360,6 @@ class FrameGenerators(object):
             self.continue_gid(self.command_gid)
             self.terminate_gid(self.command_gid)
             terminate_processes()
-            # self.terminate_processes()
-
-    def terminate_processes(self):
-        # self.proc.wait()
-        # self.proc.terminate()
-        term_sig = 15
-        try:
-            os.killpg(os.getpgid(self.command_gid), term_sig)
-        except (TypeError, OSError):
-            pass
-        # term_sig = 9
-        # try:
-        #     os.killpg(os.getppid(self.command_gid), term_sig)
-        # except (TypeError, OSError):
-        #     pass
 
     def dropped(self):
         self.command_gid = 0
@@ -1445,7 +1405,6 @@ class FrameGenerators(object):
             preexec_fn=os.setsid
         )
         self.command_gid = os.getpgid(proc.pid)
-        # self.command_ppid = os.getppid(proc.pid)
 
         return proc
 
@@ -1661,6 +1620,7 @@ class EventController(object):
                 # when a window is resized, a lot of events are fired once. We will delay a bit.
                 if self.resize_request and timeit.default_timer() > self.resize_request:
                     try:
+                        self.get_terminal_size()
                         self.event_queues[self.draw_window_id].put(["refresh"], block=False)
                         self.resize_request = 0
                     except multiprocessing.queues.Full:
@@ -1727,6 +1687,15 @@ class EventController(object):
                         ord("8"): 7, ord("9"): 8, ord("0"): 9, ord("!"): 10, ord("@"): 11, ord("#"): 12, ord("$"): 13,
                         ord("%"): 14, ord("^"): 15, ord("&"): 16, ord("*"): 17, ord("("): 18, ord(")"): 19,
                         8: Settings.window_id_help}
+    def get_terminal_size(self):
+        # need to refresh before getting size
+        self.window.refresh()
+        self.terminal_height, self.terminal_width = self.window.getmaxyx()
+
+        Debug.debug_to_file("{} {}".format(self.terminal_height, self.terminal_width))
+
+        # self.terminal_draw_height = self.terminal_height - self.draw_height_adder
+        # self.terminal_draw_width = self.terminal_width - self.draw_width_adder
 
     def keyboard_input(self, raw_keystroke=0):
         self.window.nodelay(1)
@@ -1789,9 +1758,14 @@ class EventController(object):
             self.write_to_file()
 
         # TODO sleeping processes are not quiting with q, so use ctrl-c for now
-        # if raw_keystroke == ord("q"):
-        #     sys.exc_clear()
-        #     terminate_processes()
+        if raw_keystroke == ord("q"):
+            sys.exc_clear()
+            # need to simulate a ctrl-c, otherwise sleeping processes won't exit on 'q'
+            term_sig = 2
+            try:
+                os.killpg(os.getpgid(0), term_sig)
+            except OSError:
+                pass
 
     def send_event(self, instruction, win):
         for window_id in win:
@@ -1899,7 +1873,6 @@ def terminate_processes(message=None):
         os.killpg(os.getpgid(0), term_sig)
     except (TypeError, OSError):
         pass
-    sys.exit()
 
 def terminate_curses():
     curses.echo()
