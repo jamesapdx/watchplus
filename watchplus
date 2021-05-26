@@ -481,9 +481,9 @@ class FrameControllers(object):
         self.frame_length = []
         self.frame_state = []
         self.frame_date_time = []
-        self.current = - 1
+        self.current = 0
 
-        self.draw_current = -2
+        self.draw_current = 0
         self.draw_state = "stop"
         self.recording_state = "record"
 
@@ -996,7 +996,7 @@ class FrameControllers(object):
             return
 
         # use this for status bar
-        self.draw_height_adder = 3
+        self.draw_height_adder = 1
         # use this for line numbers (future)
         self.draw_width_adder = 0
         self.get_terminal_size()
@@ -1692,7 +1692,6 @@ class EventController(object):
         self.window.refresh()
         self.terminal_height, self.terminal_width = self.window.getmaxyx()
 
-        Debug.debug_to_file("{} {}".format(self.terminal_height, self.terminal_width))
 
         # self.terminal_draw_height = self.terminal_height - self.draw_height_adder
         # self.terminal_draw_width = self.terminal_width - self.draw_width_adder
