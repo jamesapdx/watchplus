@@ -41,6 +41,7 @@ import string
 import shlex
 import fcntl
 import bz2
+import gzip
 from time import sleep as _sleep
 
 try:
@@ -245,7 +246,7 @@ def store_args_in_settings(system_args, commands_assigned, commands_unassigned):
     Settings.timeout = min(.1, Settings.interval * .4)
     Settings.precision = system_args.precision
     Settings.run_path = os.path.expanduser('~/')
-    Settings.run_compression = True
+    Settings.run_compression = "gzip"  # gzip|bz2. bz2 smaller file size but can not append with Python 2
     Settings.max_line_length = MAX_LINE_LENGTH
 
     for count, command in enumerate(commands_assigned):
@@ -384,11 +385,13 @@ class Settings(object):
     precision = False
     start_window_id = 0
     run_path = ""
-    run_compression = True
+    # TODO switch to bz2 on Python3
+    run_compression = "gzip"  # gzip|bz2. bz2 smaller file size but can not append with Python 2
     max_line_length = MAX_LINE_LENGTH
     load_saved_run = False
     load_run_file = ""
     saved_frame_count = 0
+    python_version = sys.version_info[0]
 
     @classmethod
     def _setup_help(cls):
@@ -606,7 +609,7 @@ class FrameControllers(object):
                generator.new_frame --> | frame_queue  | --> self.frame  (the frame itself
             """
         try:
-            # init settings
+            # init mandatory settings
             self.command = Settings.commands[window_id]
             self.window_id = window_id
             self.event_queue = event_queue
@@ -720,7 +723,6 @@ class FrameControllers(object):
             if self.frame_state[new] == "dropped":
                 self.frame_length[new] = 0
             elif len(frame_changes) == 0:
-                # TODO fix len frame_changes == 0
                 pass
             elif self.frame_state[new] == "first":
                 # first frame ever, so easy store
@@ -1232,19 +1234,25 @@ class FrameControllers(object):
         run_file = self.event[1]
         if not self.window_id == Settings.window_id_help:
             try:
-                if Settings.run_compression:
-                    with bz2.BZ2File(run_file, 'ab') as f:
+                if Settings.run_compression == "gzip":
+                    with gzip.GzipFile(run_file, 'ab') as f:
+                        pickle.dump(self, f, protocol=2)
+                elif Settings.run_compression == "bz2":
+                    with bz2.BZ2File(run_file, 'XX') as f: # there is no 'ab' on bz2 on Python 2
                         pickle.dump(self, f, protocol=2)
                 else:
                     with open(run_file, 'ab') as f:
                         pickle.dump(self, f, protocol=2)
             except FileNotFoundError:
                 # TODO add failed message, remove started file
+                # let's not crash the program!
                 pass
             except:
                 # TODO add failed message, remove started file
+                # let's not crash the program!
                 pass
 
+        # tell the event controller we are done
         self.system_queue.put(2)
 
 
@@ -1255,7 +1263,7 @@ class FrameControllersStatic(FrameControllers):
         # if saved, we need to create all frames manually (typically for help display)
         self.init_frame()
         super(FrameControllersStatic, self).init_frame_saved()
-        for count in range(Settings.saved_frame_count):
+        for count in range(Settings.saved_frame_count + 1):
             self.new_frame_store()
 
     def init_generator_childprocess(self):
@@ -1336,21 +1344,6 @@ class FrameControllersHelp(FrameControllersStatic):
 class FrameControllersNoChange(FrameControllers):
     """ TODO future home of not recording changes for performance"""
     pass
-
-
-class FrameControllersSavedRun(FrameControllers):
-    """ TODO future home of saved runs"""
-
-    def init_frame(self):
-        self.draw_current = len(self.frame_state) - 1
-        self.current = self.draw_current
-        self.frame_draw_current_queue.value = self.draw_current
-        self.draw_state = "pause"
-        self.frame_draw_state_queue.value = 1 if self.draw_state == "play" else 0
-        self.recording_state = "stop"
-
-    def init_generator_childprocess(self):
-        pass
 
 
 # ======================================================================================================================
@@ -1544,9 +1537,7 @@ class FrameGenerators(object):
             self.dropped()
             return
 
-        # break result into a line by line list, for python 2/3
-        # TODO fix: imporve stderr
-        # don't keep ends because in python 3 it could different ends, and we only want /n
+        # TODO fix: improve stderr
         try:
             self.frame[self.current] = result.splitlines()
             self.frame[self.current] += error.splitlines()
@@ -1693,11 +1684,6 @@ class EventController(object):
             ord(" ")          : ["one", "toggle draw state"],
             ord("l")          : ["one", "toggle line wrap"],
 
-            # ord("-")          : ["one", "playback speed", "slower"],
-            # ord("_")          : ["one", "playback speed", "slower"],
-            # ord("+")          : ["one", "playback speed", "faster"],
-            # ord("=")          : ["one", "playback speed", "faster"],
-
             curses.KEY_LEFT   : ["one", "back", 1],  # left-arrow
             ord("s")          : ["one", "back", 1],
             393               : ["one", "back", 10],  # shf-left-arror
@@ -1806,7 +1792,6 @@ class EventController(object):
             # ctrl-w
             self.write_to_file()
 
-        # TODO sleeping processes are not quiting with q, so use ctrl-c for now
         if raw_keystroke == ord("q"):
             sys.exc_clear()
             # need to simulate a ctrl-c, otherwise sleeping processes won't exit on 'q'
@@ -1848,7 +1833,11 @@ class EventController(object):
 
         # write Setting
         try:
-            if Settings.run_compression:
+            if Settings.run_compression == "gzip":
+                with gzip.GzipFile(run_file, 'wb') as f:
+                    # use () on Settings because it has no instances
+                    pickle.dump(Settings(), f, protocol=2)
+            elif Settings.run_compression == "gzip":
                 with bz2.BZ2File(run_file, 'wb') as f:
                     # use () on Settings because it has no instances
                     pickle.dump(Settings(), f, protocol=2)
@@ -1858,9 +1847,11 @@ class EventController(object):
                     pickle.dump(Settings(), f, protocol=2)
         except FileNotFoundError:
             # TODO add failed message, remove started file
+            # let's not crash the program!
             return
         except:
             # TODO add failed message
+            # let's not crash the program!
             return
 
         # tell each tab to write
@@ -2006,7 +1997,10 @@ class MainSavedRun(Main):
 
     @classmethod
     def spawn_frame_controllers(cls):
-        if Settings.run_compression:
+        if Settings.run_compression == "gzip":
+            with gzip.GzipFile(Settings.load_run_file, 'rb') as run_file:
+                cls.load_pickle(run_file)
+        elif Settings.run_compression == "bz2":
             with bz2.BZ2File(Settings.load_run_file, 'rb') as run_file:
                 cls.load_pickle(run_file)
         else:
@@ -2017,7 +2011,13 @@ class MainSavedRun(Main):
     def load_pickle(cls, run_file):
         try:
             # load Settings first
-            pickle.load(run_file, fix_imports=True)
+            try:
+                # encoding=Latin is used by Python 3 to read Python 2 files
+                pickle.load(run_file, fix_imports=True, encoding='latin1')
+            except TypeError:
+                # Python 2 does not have fix_imports
+                pickle.load(run_file)
+
             Settings.load_saved_run = True
             Settings.start_window_id = Settings.window_ids[0]
             # we need to rebuild help tab, as we don't want to use the saved help
@@ -2030,14 +2030,22 @@ class MainSavedRun(Main):
                     cls.spawn_frame_controller(Settings.window_id_help,
                                                Settings._frame_controller_seeds[Settings.window_id_help])
                 else:
-                    # if we load data into a FrameController cls instance, then spawn a new processes from that instance,
-                    # the instance data will be copied into the new processes
-                    frame_controller_seed = pickle.load(run_file, fix_imports=True)
-                    Settings.saved_frame_count = len(frame_controller_seed.frame_state) - 1
+                    # if we load data into a FrameController cls instance, then spawn a new FC processes from that
+                    # instance, the instance data will be copied into the new processes
+                    try:
+                        # encoding=Latin is used by Python 3 to read Python 2 files
+                        frame_controller_seed = pickle.load(run_file, fix_imports=True, encoding='latin1')
+                    except TypeError:
+                        # Python 2 does not have fix_imports
+                        frame_controller_seed = pickle.load(run_file)
+
+                    Settings.saved_frame_count = max(len(frame_controller_seed.frame_state) - 1,
+                                                     Settings.saved_frame_count)
                     cls.spawn_frame_controller(window_id, frame_controller_seed)
                     del frame_controller_seed
 
         except EOFError:
+            # TODO make a error message
             # not enough items to read in
             pass
 
