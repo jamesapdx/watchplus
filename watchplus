@@ -1311,7 +1311,7 @@ class FrameGenerators(object):
             self.frame_queue = frame_queue
             self.generator_event_queue = generator_event_queue
             self.event_queue = event_queue
-            self.command_gid = None
+            self.command_pid = None
             self.proc = None
             self.generator_event = None
 
@@ -1336,11 +1336,11 @@ class FrameGenerators(object):
                 if self.frame_type == "pause":
                     self.recording_state = "pause"
                     if self.streaming:
-                        self.pause_gid(self.command_gid)
+                        self.pause_pid(self.command_pid)
                         continue
                 if self.streaming:
                     if self.recording_state == "pause":
-                        self.continue_gid(self.command_gid)
+                        self.continue_pid(self.command_pid)
                         self.recording_state = "record"
                     if self.frame_type == "first":
                         self.frame_generator_streaming_first()
@@ -1357,37 +1357,37 @@ class FrameGenerators(object):
 
         except:
             # continue any paused processes before quiting
-            self.continue_gid(self.command_gid)
-            self.terminate_gid(self.command_gid)
+            # self.continue_gid(self.command_gid)
+            # self.terminate_gid(self.command_gid)
             terminate_processes()
 
     def dropped(self):
-        self.command_gid = 0
+        self.command_pid = 0
         self.frame_state = "dropped"
         self.frame_length[self.current] = 0
         self.frame_changes = []
 
-    def pause_gid(self, gid):
+    def pause_pid(self, pid):
         term_sig = 19
-        gid = 0 if gid is None else gid
+        pid = 0 if pid is None else pid
         try:
-            os.killpg(gid, term_sig)
+            os.kill(pid, term_sig)
         except OSError:
             pass
 
-    def continue_gid(self, gid):
+    def continue_pid(self, pid):
         term_sig = 18
-        gid = 0 if gid is None else gid
+        pid = 0 if pid is None else pid
         try:
-            os.killpg(gid, term_sig)
+            os.kill(pid, term_sig)
         except OSError:
             pass
 
-    def terminate_gid(self, gid):
+    def terminate_pid(self, pid):
         term_sig = 15
-        gid = 0 if gid is None else gid
+        pid = 0 if pid is None else pid
         try:
-            os.killpg(gid, term_sig)
+            os.kill(pid, term_sig)
         except OSError:
             pass
         self.frame_state = "dropped"
@@ -1401,10 +1401,9 @@ class FrameGenerators(object):
             stderr=subprocess.PIPE,
             shell=True,
             env=env,
-            universal_newlines=True,
-            preexec_fn=os.setsid
+            universal_newlines=True
         )
-        self.command_gid = os.getpgid(proc.pid)
+        self.command_pid = proc.pid
 
         return proc
 
@@ -1424,7 +1423,7 @@ class FrameGenerators(object):
 
         try:
             result = self.proc.stdout.read()
-        except TypeError:
+        except (TypeError, IOError):
             result = ""
         try:
             error = self.proc.stderr.read()
@@ -1468,7 +1467,7 @@ class FrameGenerators(object):
             end_timer = max(0, self.stop_time - timeit.default_timer() - safe_margin)
 
             if end_timer > 0:
-                timer = threading.Timer(end_timer, self.terminate_gid, args=(self.command_gid,))
+                timer = threading.Timer(end_timer, self.terminate_pid, args=(self.command_pid,))
                 timer.start()
 
                 result, error = self.proc.communicate()
