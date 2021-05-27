@@ -5,13 +5,15 @@ from __future__ import print_function
 
 # -*- encoding: utf8 -*-
 
-#################################################################################################################
-#  watchplus, created by Jim Shaffer
-#  watchplus -h to see usage and options, open sample_run_file to see examples
-#################################################################################################################
+__version__ = "1.0"
+__version_date__ = "05/27/21"
 
 #################################################################################################################
-#  usage: watchplus -h
+#  watchplus, created by Jim Shaffer
+#
+#  usage: watchplus -h (view sample_run_file to see example)
+#         to test out: watchplus -f sample_command_file (then ctrl-h to key mappings, switch tabs 1-0 & shift-1-0)
+#
 #  Python 2 and 3 compatible, Linux only, tested on Fedora
 #
 #  under the hood:
@@ -22,8 +24,8 @@ from __future__ import print_function
 #         and draws the frames.
 #           - class FrameGenerator is started as a process from a FC, it runs the actual linux command and sends
 #             it back to the FC.
-#       - class EventController is also started as it's own processes and it sends events to the FC. It handles
-#         new frame timing (so that all tabs stay in sync) and keystrokes.
+#       - class EventController is also started as it's own processes and sends events to the FC. It handles
+#         new frame timing (so that all tabs stay in sync) and keystrokes (user interactions).
 #################################################################################################################
 
 import os
@@ -246,7 +248,7 @@ def store_args_in_settings(system_args, commands_assigned, commands_unassigned):
     Settings.timeout = min(.1, Settings.interval * .4)
     Settings.precision = system_args.precision
     Settings.run_path = os.path.expanduser('~/')
-    Settings.run_compression = "gzip"  # gzip|bz2. bz2 smaller file size but can not append with Python 2
+    Settings.run_compression = "gzip"  # none|gzip|bz2. bz2 smaller file size but can not append with Python 2
     Settings.max_line_length = MAX_LINE_LENGTH
 
     for count, command in enumerate(commands_assigned):
@@ -256,13 +258,13 @@ def store_args_in_settings(system_args, commands_assigned, commands_unassigned):
             Settings._frame_controller_seeds[count] = FrameControllers()
             Settings.bottom_bar_tab_label[count] = command.tab_label
             Settings.bottom_bar_label[count] = "".join([x for x in Settings.commands[count] if x in Settings.printable])
-            Settings.window_ids.append(count)
+            Settings.tab_ids.append(count)
             Settings.streaming[count] = command.streaming
             Settings.glue_bottom[count] = command.glue_bottom
             Settings.no_change[count] = command.no_change
             Settings.no_line_wrap[count] = command.no_line_wrap
             Settings.green_text[count] = command.green_text
-    Settings.start_window_id = Settings.window_ids[0]
+    Settings.start_tab_id = Settings.tab_ids[0]
     for command in enumerate(commands_unassigned):
         Settings.commands_unassigned.append(command.print)
 
@@ -306,10 +308,11 @@ Keys controlling playback and viewing:
      g | G ............................... Top | Bottom
      x ................................... Toggle change history display on/off
      l ................................... Toggle line wrap
+     ctrl-g .............................. Toggle green text
   Other controls:
-     crtl-w .............................. Write frames and tabs to ~/[date_time].wp
+     ctrl-w .............................. Write frames and tabs to ~/[date_time].wp
                                            Stops recording during write. Load: -o <f>
-     crtl-h .............................. View this help and tab assignments
+     ctrl-h .............................. View this help and tab assignments
      ctrl-c .............................. Quit"""
 
     return argparse.ArgumentParser(formatter_class=format_func,
@@ -337,6 +340,9 @@ def add_system_args(parser):
                        help="Interval in <seconds>, minimum .01, default = 1.0.")
     group.add_argument("-p", "--precise", dest="precision", action="store_true",
                        help="Attempt to maintain interval, drop frame if not completed in time.")
+    group.add_argument('-v', '--version', action='version',
+                       version='%(prog)s version {} ({})'.format(__version__, __version_date__),
+                       help="Show version number.")
     group.add_argument("-h", "--help", dest="show_help", action="store_true",
                        help="Show this help.")
 
@@ -368,7 +374,7 @@ class Settings(object):
     _frame_controller_seeds = [None] * MAX_TABS
     commands_assigned = [None]
     commands_unassigned = []
-    bottom_bar_tab_label =  [None] * MAX_TABS
+    bottom_bar_tab_label = [None] * MAX_TABS
     bottom_bar_label = [None] * MAX_TABS
     text = [None] * MAX_TABS
     streaming = [False] * MAX_TABS
@@ -379,33 +385,38 @@ class Settings(object):
     random_text_colors = [False] * MAX_TABS
 
     # general and system settings
-    window_ids = []
+    tab_ids = []
     interval = 1
     timeout = .4
     precision = False
-    start_window_id = 0
+    start_tab_id = 0
     run_path = ""
     # TODO switch to bz2 on Python3
-    run_compression = "gzip"  # gzip|bz2. bz2 smaller file size but can not append with Python 2
+    run_compression = "gzip"  # none|gzip|bz2. bz2 smaller file size but can not append with Python 2
     max_line_length = MAX_LINE_LENGTH
     load_saved_run = False
     load_run_file = ""
     saved_frame_count = 0
-    python_version = sys.version_info[0]
+    _python_version = sys.version_info[0]
+    imported_python_version = sys.version_info[0]
+    _version = __version__
+    imported_version = __version__
+    _compatable_versions = ["1.0"]
+    # TODO add version checking on imports
 
     @classmethod
     def _setup_help(cls):
-        if not hasattr(cls, "window_id_help"):
-            cls.window_id_help = HELP_TAB
-            cls.window_ids.append(cls.window_id_help)
-        cls.text[cls.window_id_help] = "\n" + print_help(stdout=False)
-        cls.commands[cls.window_id_help] = "Help Screen"
-        cls.bottom_bar_tab_label[cls.window_id_help] = "ctrl-h"
-        cls.bottom_bar_label[cls.window_id_help] = "Help Screen"
-        cls._frame_controller_seeds[cls.window_id_help] = FrameControllersHelp()
-        cls.no_line_wrap[cls.window_id_help] = False
-        cls.no_change[cls.window_id_help] = True
-        cls.glue_bottom[cls.window_id_help] = False
+        if not hasattr(cls, "tab_id_help"):
+            cls.tab_id_help = HELP_TAB
+            cls.tab_ids.append(cls.tab_id_help)
+        cls.text[cls.tab_id_help] = "\n" + print_help(stdout=False)
+        cls.commands[cls.tab_id_help] = "Help Screen"
+        cls.bottom_bar_tab_label[cls.tab_id_help] = "ctrl-h"
+        cls.bottom_bar_label[cls.tab_id_help] = "Help Screen"
+        cls._frame_controller_seeds[cls.tab_id_help] = FrameControllersHelp()
+        cls.no_line_wrap[cls.tab_id_help] = False
+        cls.no_change[cls.tab_id_help] = True
+        cls.glue_bottom[cls.tab_id_help] = False
 
     @classmethod
     def __getstate__(cls):
@@ -447,7 +458,7 @@ class Debug():
 
 
 # ======================================================================================================================
-#   Frame Controller, drawing the output, moving around, switching tabs (windows)
+#   Frame Controller, drawing the output, moving around, switching tabs
 # ======================================================================================================================
 
 class FrameControllers(object):
@@ -470,17 +481,17 @@ class FrameControllers(object):
         :return: instance.__dict__ with only the includes fields
         """
         includes = [
-        "lines_chars",
-        "lines_chars_pointers",
-        "lines",
-        "lines_states",
-        "lines_pointers",
-        "lines_lengths",
-        "frame_length",
-        "frame_state",
-        "frame_date_time",
-        "current",
-        "streaming"]
+            "lines_chars",
+            "lines_chars_pointers",
+            "lines",
+            "lines_states",
+            "lines_pointers",
+            "lines_lengths",
+            "frame_length",
+            "frame_state",
+            "frame_date_time",
+            "current",
+            "streaming"]
         return {var_name: self.__dict__[var_name] for var_name in self.__dict__ if var_name in includes}
 
     def __setstate__(self, state):
@@ -502,7 +513,7 @@ class FrameControllers(object):
         self.draw_width_adder = 0
         self.terminal_draw_height = 0
         self.terminal_draw_width = 0
-        self.window = None
+        self.curses_window = None
         self.terminal_height = 0
         self.terminal_width = 0
         self.y_top_line = 0
@@ -538,12 +549,12 @@ class FrameControllers(object):
         self.recording_state = "stop"
 
     def init_start_tab(self):
-        if self.window_id == Settings.start_window_id:
+        if self.tab_id == Settings.start_tab_id:
             self.tab_active_tab = True
             self.draw_state = "live"
 
     def init_start_tab_saved(self):
-        if self.window_id == Settings.start_window_id:
+        if self.tab_id == Settings.start_tab_id:
             self.tab_active_tab = True
             self.frame_draw_current_queue.value = self.draw_current
             self.frame_draw_state_queue.value = 0  # "pause": 0, "play": 1, "live": 2
@@ -552,34 +563,35 @@ class FrameControllers(object):
         # create a new curses window
 
         # standard settings
-        self.window = curses.newwin(0, 0)
-        self.window.nodelay(1)
-        self.window.keypad(True)
+        self.curses_window = curses.newwin(0, 0)
+        self.curses_window.nodelay(1)
+        self.curses_window.keypad(True)
         # these two might help with screen flicker
-        self.window.idcok(False)
-        self.window.idlok(False)
-        self.window.erase()
+        self.curses_window.idcok(False)
+        self.curses_window.idlok(False)
+        self.curses_window.erase()
         # curses needs an initial write or it draws the first frame with artifacts
-        for x in range(200):
-            self.window.addstr(" ")
-        self.window.redrawwin()
-        self.window.refresh()
+        for i in range(200):
+            self.curses_window.addstr(" ")
+        self.curses_window.redrawwin()
+        self.curses_window.refresh()
 
     def init_event(self):
         self.event_choices = {
             # frames
             "start new frame": self.new_frame_request,  # comes from event controller self.event_queue
             "new frame": self.new_frame_received,  # comes from frame generator self.event_queue
-            # windows
+            # tabs
             "tab change": self.change_tabs,
             "refresh": self.draw_live_frame,
             "back": self.frames_back,
             "forward": self.frames_forward,
-            "window move": self.move_window_up_down,
+            "tab move": self.move_tab_up_down,
             # toggle items
             "toggle draw state": self.toggle_draw_state,
             "toggle recording": self.toggle_recording,
             "toggle line wrap": self.toggle_line_warp,
+            "toggle green": self.toggle_green,
             "toggle change": self.toggle_change,
             "clear history": self.clear_history,
             # save
@@ -601,7 +613,7 @@ class FrameControllers(object):
             ))
         self.process_generator.start()
 
-    def frame_controller(self, window_id, event_queue, system_queue, frame_draw_current_queue, frame_draw_state_queue):
+    def frame_controller(self, tab_id, event_queue, system_queue, frame_draw_current_queue, frame_draw_state_queue):
         """ This is the main method that controls storing and drawing frames. First, it spawns a never
             ending generator subprocesses that builds the frames.  The generator sends the data back
             through queues, which is then stored and drawn.
@@ -610,20 +622,20 @@ class FrameControllers(object):
             """
         try:
             # init mandatory settings
-            self.command = Settings.commands[window_id]
-            self.window_id = window_id
+            self.command = Settings.commands[tab_id]
+            self.tab_id = tab_id
             self.event_queue = event_queue
             self.system_queue = system_queue
             self.frame_draw_current_queue = frame_draw_current_queue
             self.frame_draw_state_queue = frame_draw_state_queue
-            self.bottom_bar_tab_label = Settings.bottom_bar_tab_label[window_id]
-            self.bottom_bar_label = Settings.bottom_bar_label[window_id]
+            self.bottom_bar_tab_label = Settings.bottom_bar_tab_label[tab_id]
+            self.bottom_bar_label = Settings.bottom_bar_label[tab_id]
             self.interval = Settings.interval
-            self.streaming = Settings.streaming[window_id]
-            self.glued_to_bottom = True if self.streaming or Settings.glue_bottom[window_id] else False
-            self.no_change = Settings.no_change[window_id]
-            self.no_line_wrap = Settings.no_line_wrap[window_id]
-            self.green_text = Settings.green_text[window_id]
+            self.streaming = Settings.streaming[tab_id]
+            self.glued_to_bottom = True if self.streaming or Settings.glue_bottom[tab_id] else False
+            self.no_change = Settings.no_change[tab_id]
+            self.no_line_wrap = Settings.no_line_wrap[tab_id]
+            self.green_text = Settings.green_text[tab_id]
             self.precision = False
 
             # init
@@ -816,7 +828,7 @@ class FrameControllers(object):
         self.draw_live_frame()
 
     def toggle_change(self):
-        if self.no_change == False:
+        if not self.no_change:
             self.no_change = True
         else:
             self.no_change = False
@@ -827,6 +839,13 @@ class FrameControllers(object):
             self.no_line_wrap = False
         else:
             self.no_line_wrap = True
+        self.draw_live_frame()
+
+    def toggle_green(self):
+        if self.green_text:
+            self.green_text = False
+        else:
+            self.green_text = True
         self.draw_live_frame()
 
     def toggle_draw_state(self):
@@ -866,11 +885,11 @@ class FrameControllers(object):
             self.tab_active_tab = False
             self.frame_draw_current_queue.value = self.draw_current
             self.frame_draw_state_queue.value = {"pause": 0, "play": 1, "live": 2}[self.draw_state]
-            self.window.refresh()
+            self.curses_window.refresh()
 
     def playback(self):
         if self.tab_active_tab and self.draw_state == "play" and timeit.default_timer() > self.next_playback:
-            self.draw_current +=1
+            self.draw_current += 1
             if self.draw_current == self.current:
                 self.draw_state = "live"
             self.draw_live_frame()
@@ -878,8 +897,8 @@ class FrameControllers(object):
 
     def get_terminal_size(self):
         # need to refresh before getting size
-        self.window.refresh()
-        self.terminal_height, self.terminal_width = self.window.getmaxyx()
+        self.curses_window.refresh()
+        self.terminal_height, self.terminal_width = self.curses_window.getmaxyx()
 
         self.terminal_draw_height = self.terminal_height - self.draw_height_adder
         self.terminal_draw_width = self.terminal_width - self.draw_width_adder
@@ -905,7 +924,7 @@ class FrameControllers(object):
             self.draw_state = "pause"
         self.draw_live_frame()
 
-    def move_window_up_down(self):
+    def move_tab_up_down(self):
         self.get_terminal_size()
         direction = self.event[1]
         amount = self.event[2]
@@ -935,7 +954,7 @@ class FrameControllers(object):
         self.draw_live_frame()
 
     def line_wrap_off(self):
-        """ Handle window moving here, using self.draw_move = +- lines.
+        """ Handle tab movement here, using self.draw_move = +- lines.
         """
         self.y_top_num_wrapped_lines = 0
         if self.frame_length[self.draw_current] <= self.terminal_draw_height:
@@ -957,7 +976,7 @@ class FrameControllers(object):
             terminal resizes, and more.  We could just let curses handle it, but it would only scroll
             an entire line at a time and not handle glue_bottom.
 
-            Handle window moving here, using self.draw_move = +- lines
+            Handle tab movement here, using self.draw_move = +- lines
         """
         draw_current = self.draw_current
         if self.current == self.draw_current:
@@ -1039,7 +1058,7 @@ class FrameControllers(object):
                     if len(wrapped_lines) > self.terminal_draw_height:
                         wrapped_top = min(len(wrapped_lines) - 1, wrapped_top + self.draw_move)
                         wrapped_bottom = min(len(wrapped_lines) - 1,
-                                                  wrapped_top + self.terminal_draw_height - 1)
+                                             wrapped_top + self.terminal_draw_height - 1)
                         wrapped_top = wrapped_bottom - self.terminal_draw_height + 1
 
                         if wrapped_bottom == bottom:
@@ -1065,7 +1084,7 @@ class FrameControllers(object):
         draw_current = self.draw_current
 
         # # using .clear() cause screen flicker.  Use erase() with redrawwin() and refresh()
-        self.window.erase()
+        self.curses_window.erase()
 
         if self.current < 0 or len(self.frame_state) == 0:
             status_bar, color_pair = self.status_bar_build()
@@ -1075,9 +1094,9 @@ class FrameControllers(object):
             status_bar, color_pair = self.status_bar_build()
         elif self.frame_state[draw_current] == "dropped":
             if self.precision is True:
-                self.window.addstr("Command could not complete in time, frame dropped.")
+                self.curses_window.addstr("Command could not complete in time, frame dropped.")
             else:
-                self.window.addstr("Error processing frame, frame dropped.")
+                self.curses_window.addstr("Error processing frame, frame dropped.")
             status_bar, color_pair = self.status_bar_build()
         elif self.frame_length[draw_current] == 0:
             status_bar, color_pair = self.status_bar_build()
@@ -1119,7 +1138,7 @@ class FrameControllers(object):
                     color_text = 4 if self.green_text else 0
                     if line_state == 0 or self.no_change:
                         # no change on "pointed to" line, or display changes turned off
-                        self.window.addstr(line[line_start:], curses.color_pair(color_text))
+                        self.curses_window.addstr(line[line_start:], curses.color_pair(color_text))
                     elif line_state == 2:
                         # change on new a new line (longer than previous output)
                         if pointer == draw_current:
@@ -1129,7 +1148,7 @@ class FrameControllers(object):
                             # change on older frame,so it is just a history, use yellow
                             color = 1
                         color_pair = curses.color_pair(color)
-                        self.window.addstr(line[line_start:], color_pair)
+                        self.curses_window.addstr(line[line_start:], color_pair)
                     else:
                         # this line self line_state == 1, change on an existing "pointed to" line
                         for column in range(line_start, line_length):
@@ -1158,9 +1177,9 @@ class FrameControllers(object):
                                 pass
                             color_pair = curses.color_pair(color)
 
-                            self.window.addstr(char, color_pair)
+                            self.curses_window.addstr(char, color_pair)
 
-                    self.window.addstr("\n")
+                    self.curses_window.addstr("\n")
 
             except curses.error:
                 pass
@@ -1175,12 +1194,12 @@ class FrameControllers(object):
                 char = str(status_bar[column])
             except IndexError:
                 char = " "
-            self.window.addstr(line_number, column, char, color_pair)
-        self.window.addstr(line_number, column, " ", color_pair)
-        self.window.insstr(line_number, column, " ", color_pair)
+            self.curses_window.addstr(line_number, column, char, color_pair)
+        self.curses_window.addstr(line_number, column, " ", color_pair)
+        self.curses_window.insstr(line_number, column, " ", color_pair)
 
-        self.window.redrawwin()
-        self.window.refresh()
+        self.curses_window.redrawwin()
+        self.curses_window.refresh()
 
     def status_bar_build(self, draw_start=-1, draw_end=0, frame_height=0):
         try:
@@ -1232,7 +1251,7 @@ class FrameControllers(object):
 
     def write_to_file(self):
         run_file = self.event[1]
-        if not self.window_id == Settings.window_id_help:
+        if not self.tab_id == Settings.tab_id_help:
             try:
                 if Settings.run_compression == "gzip":
                     with gzip.GzipFile(run_file, 'ab') as f:
@@ -1330,7 +1349,7 @@ class FrameControllersStatic(FrameControllers):
 class FrameControllersHelp(FrameControllersStatic):
 
     def get_output(self):
-        help = Settings.text[Settings.window_id_help].splitlines()
+        help = Settings.text[Settings.tab_id_help].splitlines()
         help += ["", "Tabs and Commands:"]
         help += ["      {}".format(x) for x in Settings.commands_assigned if x is not None]
         commands_unassigned = [x for x in Settings.commands_unassigned if x]
@@ -1379,7 +1398,6 @@ class FrameGenerators(object):
             self.recording_state = "record"
 
             while True:
-
                 # frame_controller sends us the parameters for this new frame
                 self.generator_event = self.generator_event_queue.get(block=True)
                 # self.frame_type = normal, full, first, stop, start
@@ -1509,7 +1527,7 @@ class FrameGenerators(object):
     # Non Streaming Generator starts here ####################
 
     def frame_generator(self):
-        """ A frame is composed of a line by line list of the output from the assigned command for this window.
+        """ A frame is composed of a line by line list of the output from the assigned command for this curses_window.
         """
         self.proc = self.run_command()
 
@@ -1524,7 +1542,7 @@ class FrameGenerators(object):
                 result, error = self.proc.communicate()
                 timer.cancel()
             else:
-                # already missed our window before we even ran the command
+                # already missed our time before we even ran the command
                 self.frame_state = "dropped"
 
             if self.frame_state == "dropped":
@@ -1620,20 +1638,20 @@ class EventController(object):
     def __init__(self):
         self.key_mapping()
 
-    def event_controller(self, window, event_queues, system_queues):
+    def event_controller(self, curses_window, event_queues, system_queues):
         try:
-            self.window = window
-            self.draw_window_id = Settings.start_window_id
+            self.curses_window = curses_window
+            self.draw_tab_id = Settings.start_tab_id
             self.event_queues = event_queues
             self.system_queues = system_queues
-            self.draw_window_ids = Settings.window_ids
+            self.draw_tab_ids = Settings.tab_ids
             self.start_time = timeit.default_timer()
             self.precision = Settings.precision
             self.new_stop_time = 0
             self.new_start_date_time = 0
             self.done_count = 0
             self.help = False
-            self.last_tab = self.draw_window_id
+            self.last_tab = self.draw_tab_id
             self.resize_request = 0
             self.recording_state = "stop" if Settings.load_saved_run else "record"
 
@@ -1646,29 +1664,29 @@ class EventController(object):
                 # we will give the tabs a stop time, tell them to start, wait to hear they all done, repeat
                 # if precision = true they should finish on time
                 if timeit.default_timer() > self.new_stop_time and self.recording_state == "record":
-                    if self.done_count >= len(self.draw_window_ids):
+                    if self.done_count >= len(self.draw_tab_ids):
                         self.done_count = 0
                         self.new_stop_time = Settings.interval + timeit.default_timer()
                         self.new_start_date_time = datetime.datetime.now()
 
-                        for window_id in self.draw_window_ids:
-                            event_queues[window_id].put(["start new frame",
-                                                         self.new_stop_time,
-                                                         self.new_start_date_time,
-                                                         self.precision])
+                        for tab_id in self.draw_tab_ids:
+                            event_queues[tab_id].put(["start new frame",
+                                                      self.new_stop_time,
+                                                      self.new_start_date_time,
+                                                      self.precision])
                     else:
-                        for draw_window_id in self.draw_window_ids:
+                        for draw_tab_id in self.draw_tab_ids:
                             # collect "frame done" from the frame controllers
                             try:
-                                x = int(self.system_queues[draw_window_id].get(block=False))
+                                x = int(self.system_queues[draw_tab_id].get(block=False))
                                 self.done_count += 1 if x == 1 else 0
                             except multiprocessing.queues.Empty:
                                 pass
 
-                # when a window is resized, a lot of events are fired once. We will delay a bit.
+                # when a curses_window is resized, a lot of events are fired once. We will delay a bit.
                 if self.resize_request and timeit.default_timer() > self.resize_request:
                     try:
-                        self.event_queues[self.draw_window_id].put(["refresh"], block=False)
+                        self.event_queues[self.draw_tab_id].put(["refresh"], block=False)
                         self.resize_request = 0
                     except multiprocessing.queues.Full:
                         pass
@@ -1683,6 +1701,7 @@ class EventController(object):
         self.key_map = {
             ord(" ")          : ["one", "toggle draw state"],
             ord("l")          : ["one", "toggle line wrap"],
+            7                 : ["one", "toggle green"],  # ctrl-g
 
             curses.KEY_LEFT   : ["one", "back", 1],  # left-arrow
             ord("s")          : ["one", "back", 1],
@@ -1702,25 +1721,25 @@ class EventController(object):
             ord("F")          : ["one", "forward", 100],
             ord("e")          : ["one", "forward", 0],
 
-            curses.KEY_DOWN   : ["one", "window move", "down", "one"],
-            ord("j")          : ["one", "window move", "down", "one"],
-            4                 : ["one", "window move", "down", "half"],  # ctrl-d
-            336               : ["one", "window move", "down", "page"],  # shift-down
-            curses.KEY_NPAGE  : ["one", "window move", "down", "page"],  # page down
-            6                 : ["one", "window move", "down", "page"],  # ctrl-f
-            ord("G")          : ["one", "window move", "down", "bottom"],
-            curses.KEY_END    : ["one", "window move", "down", "bottom"],
-            526               : ["one", "window move", "down", "bottom"],  # ctrl-down
+            curses.KEY_DOWN   : ["one", "tab move", "down", "one"],
+            ord("j")          : ["one", "tab move", "down", "one"],
+            4                 : ["one", "tab move", "down", "half"],  # ctrl-d
+            336               : ["one", "tab move", "down", "page"],  # shift-down
+            curses.KEY_NPAGE  : ["one", "tab move", "down", "page"],  # page down
+            6                 : ["one", "tab move", "down", "page"],  # ctrl-f
+            ord("G")          : ["one", "tab move", "down", "bottom"],
+            curses.KEY_END    : ["one", "tab move", "down", "bottom"],
+            526               : ["one", "tab move", "down", "bottom"],  # ctrl-down
 
-            curses.KEY_UP     : ["one", "window move", "up", "one"],
-            ord("k")          : ["one", "window move", "up", "one"],
-            21                : ["one", "window move", "up", "half"],  # ctrl-u
-            337               : ["one", "window move", "up", "page"],  # shift-up
-            curses.KEY_PPAGE  : ["one", "window move", "up", "page"],  # page up
-            2                 : ["one", "window move", "up", "page"],  # ctrl-b
-            ord("g")          : ["one", "window move", "up", "top"],
-            curses.KEY_HOME   : ["one", "window move", "up", "top"],
-            567               : ["one", "window move", "up", "top"],  # crtl-up
+            curses.KEY_UP     : ["one", "tab move", "up", "one"],
+            ord("k")          : ["one", "tab move", "up", "one"],
+            21                : ["one", "tab move", "up", "half"],  # ctrl-u
+            337               : ["one", "tab move", "up", "page"],  # shift-up
+            curses.KEY_PPAGE  : ["one", "tab move", "up", "page"],  # page up
+            2                 : ["one", "tab move", "up", "page"],  # ctrl-b
+            ord("g")          : ["one", "tab move", "up", "top"],
+            curses.KEY_HOME   : ["one", "tab move", "up", "top"],
+            567               : ["one", "tab move", "up", "top"],  # ctrl-up
 
             ord("x")          : ["one", "toggle change"],
             ord("X")          : ["one", "clear history"]
@@ -1728,26 +1747,26 @@ class EventController(object):
         self.tab_map = {ord("1"): 0, ord("2"): 1, ord("3"): 2, ord("4"): 3, ord("5"): 4, ord("6"): 5, ord("7"): 6,
                         ord("8"): 7, ord("9"): 8, ord("0"): 9, ord("!"): 10, ord("@"): 11, ord("#"): 12, ord("$"): 13,
                         ord("%"): 14, ord("^"): 15, ord("&"): 16, ord("*"): 17, ord("("): 18, ord(")"): 19,
-                        8: Settings.window_id_help}
+                        8: Settings.tab_id_help}
 
     def keyboard_input(self, raw_keystroke=0):
-        self.window.nodelay(1)
+        self.curses_window.nodelay(1)
         if raw_keystroke == 0:
-            raw_keystroke = self.window.getch()
+            raw_keystroke = self.curses_window.getch()
 
         if raw_keystroke != -1:
             # to see keystroke codes uncomment the follow line and tail -f debug on the commond line
-            # Debug.debug_to_file("raw: {}".format(str(raw_keystroke)))
+            Debug.debug_to_file("raw: {}".format(str(raw_keystroke)))
             pass
 
         if raw_keystroke == curses.KEY_RESIZE:
-            # window resize event occurred
-            # when a window is resized, a lot of events are fired once. We will delay a bit.
+            # curses_window resize event occurred
+            # when a curses_window is resized, a lot of events are fired once. We will delay a bit.
             # this also helps with redraw issues
             wait_time = .3
             self.resize_request = timeit.default_timer() + wait_time
 
-        if self.draw_window_id == Settings.window_id_help:
+        if self.draw_tab_id == Settings.tab_id_help:
             # when resizing, a lot of events are generated at once. wait a bit before sending
             if raw_keystroke == 8 or raw_keystroke == 27:
                 # ctrl-h or [esc], toggle out of help. Fake a key press for the last tab
@@ -1756,13 +1775,13 @@ class EventController(object):
         if raw_keystroke in self.tab_map:
             # switch tabs
             new_win = self.tab_map[raw_keystroke]
-            if Settings.commands[new_win] and new_win != self.draw_window_id:
+            if Settings.commands[new_win] and new_win != self.draw_tab_id:
                 try:
-                    self.event_queues[self.draw_window_id].put(("tab change", new_win, "close"), timeout=Settings.timeout)
-                    self.last_tab = self.draw_window_id
-                    self.draw_window_id = new_win
+                    self.event_queues[self.draw_tab_id].put(("tab change", new_win, "close"), timeout=Settings.timeout)
+                    self.last_tab = self.draw_tab_id
+                    self.draw_tab_id = new_win
                     time.sleep(.1)
-                    self.event_queues[self.draw_window_id].put(("tab change", new_win, "new"), timeout=Settings.timeout)
+                    self.event_queues[self.draw_tab_id].put(("tab change", new_win, "new"), timeout=Settings.timeout)
                 except multiprocessing.queues.Full:
                     pass
 
@@ -1781,9 +1800,9 @@ class EventController(object):
         if raw_keystroke in self.key_map:
             # move, frames, etc
             if self.key_map[raw_keystroke][0] == "all":
-                win = self.draw_window_ids
+                win = self.draw_tab_ids
             else:
-                win = [self.draw_window_id]
+                win = [self.draw_tab_id]
             instruction = self.key_map[raw_keystroke][1:]
 
             self.send_event(instruction, win)
@@ -1802,9 +1821,9 @@ class EventController(object):
                 pass
 
     def send_event(self, instruction, win):
-        for window_id in win:
+        for tab_id in win:
             try:
-                self.event_queues[window_id].put(instruction, timeout=Settings.timeout)
+                self.event_queues[tab_id].put(instruction, timeout=Settings.timeout)
             except multiprocessing.queues.Full:
                 pass
 
@@ -1813,7 +1832,7 @@ class EventController(object):
         temp_recording_state = self.recording_state
         if self.recording_state == "record":
             self.recording_state = "stop"
-            self.send_event(["toggle recording", "stop"], self.draw_window_ids)
+            self.send_event(["toggle recording", "stop"], self.draw_tab_ids)
             # give some time for frames to finish up
             time.sleep(.6)
 
@@ -1855,13 +1874,14 @@ class EventController(object):
             return
 
         # tell each tab to write
-        for window_id in self.draw_window_ids:
-            self.send_event(["save", run_file], [window_id])
+        for tab_id in self.draw_tab_ids:
+            self.send_event(["save", run_file], [tab_id])
             get = 0
             for i in range(3 * 60 * 10):
+                # TODO improve this timeout, can cause a 3 minute delay if problems
                 # get completed response(2), 3 minute timeout
                 try:
-                    get = int(self.system_queues[window_id].get(block=True, timeout=.1))
+                    get = int(self.system_queues[tab_id].get(block=True, timeout=.1))
                     self.done_count += 1 if get == 1 else 0
                     if get == 2:
                         break
@@ -1875,15 +1895,15 @@ class EventController(object):
         if temp_recording_state == "record":
             self.recording_state = "record"
             self.new_stop_time = 0
-            self.send_event(["toggle recording", "record"], self.draw_window_ids)
+            self.send_event(["toggle recording", "record"], self.draw_tab_ids)
 
 # ======================================================================================================================
 #   Functions
 # ======================================================================================================================
 
 def new_sleep(stop_time):
-    """ Curses sends a SIGWINCH to time.sleep and mp.Queue(timeout=) when the window is resized, which terminates them
-        prematurely. To prevent this we must build our own timer. (This will not fix mp.Queue(timeout=))
+    """ Curses sends a SIGWINCH to time.sleep and mp.Queue(timeout=) when the curses_window is resized, which terminates
+        them prematurely. To prevent this we must build our own timer. (This will not fix mp.Queue(timeout=))
     """
     stop = timeit.default_timer() + stop_time
     while stop >= timeit.default_timer():
@@ -1958,27 +1978,26 @@ class Main(object):
 
     @classmethod
     def spawn_frame_controllers(cls):
-        for window_id in Settings.window_ids:
-            cls.spawn_frame_controller(window_id, Settings._frame_controller_seeds[window_id])
+        for tab_id in Settings.tab_ids:
+            cls.spawn_frame_controller(tab_id, Settings._frame_controller_seeds[tab_id])
 
     @classmethod
-    def spawn_frame_controller(cls, window_id, frame_controller_seed):
-        cls.event_queues[window_id] = multiprocessing.Queue(0)
-        cls.system_queues[window_id] = multiprocessing.Queue(0)
-        cls.process_frame_controllers[window_id] = multiprocessing.Process(
+    def spawn_frame_controller(cls, tab_id, frame_controller_seed):
+        cls.event_queues[tab_id] = multiprocessing.Queue(0)
+        cls.system_queues[tab_id] = multiprocessing.Queue(0)
+        cls.process_frame_controllers[tab_id] = multiprocessing.Process(
             target=frame_controller_seed.frame_controller,
             args=(
-                window_id,
-                cls.event_queues[window_id],
-                cls.system_queues[window_id],
+                tab_id,
+                cls.event_queues[tab_id],
+                cls.system_queues[tab_id],
                 cls.frame_draw_current_queue,
-                cls.frame_draw_state_queue
-        ))
+                cls.frame_draw_state_queue))
 
     @classmethod
     def start_frame_controllers(cls):
-        for window_id in Settings.window_ids:
-            cls.process_frame_controllers[window_id].start()
+        for tab_id in Settings.tab_ids:
+            cls.process_frame_controllers[tab_id].start()
 
     @classmethod
     def main_controller(cls):
@@ -2019,16 +2038,16 @@ class MainSavedRun(Main):
                 pickle.load(run_file)
 
             Settings.load_saved_run = True
-            Settings.start_window_id = Settings.window_ids[0]
+            Settings.start_tab_id = Settings.tab_ids[0]
             # we need to rebuild help tab, as we don't want to use the saved help
             Settings._setup_help()
 
             # load frames
-            for window_id in Settings.window_ids:
-                if window_id == Settings.window_id_help:
+            for tab_id in Settings.tab_ids:
+                if tab_id == Settings.tab_id_help:
                     # we load in the help separately, as it is not from the saved group)
-                    cls.spawn_frame_controller(Settings.window_id_help,
-                                               Settings._frame_controller_seeds[Settings.window_id_help])
+                    cls.spawn_frame_controller(Settings.tab_id_help,
+                                               Settings._frame_controller_seeds[Settings.tab_id_help])
                 else:
                     # if we load data into a FrameController cls instance, then spawn a new FC processes from that
                     # instance, the instance data will be copied into the new processes
@@ -2041,7 +2060,7 @@ class MainSavedRun(Main):
 
                     Settings.saved_frame_count = max(len(frame_controller_seed.frame_state) - 1,
                                                      Settings.saved_frame_count)
-                    cls.spawn_frame_controller(window_id, frame_controller_seed)
+                    cls.spawn_frame_controller(tab_id, frame_controller_seed)
                     del frame_controller_seed
 
         except EOFError:
