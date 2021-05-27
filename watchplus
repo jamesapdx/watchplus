@@ -5,6 +5,27 @@ from __future__ import print_function
 
 # -*- encoding: utf8 -*-
 
+#################################################################################################################
+#  watchplus, created by Jim Shaffer
+#  watchplus -h to see usage and options, open sample_run_file to see examples
+#################################################################################################################
+
+#################################################################################################################
+#  usage: watchplus -h
+#  Python 2 and 3 compatible, Linux only, tested on Fedora
+#
+#  under the hood:
+#       - watchplus extensively uses multiprocessing.
+#       - class Settings stores all the commands to be run and settings as class variables.
+#       - class Main() is responsible for starting all the processes.
+#       - class FrameController (FC) is started as a new process, one per tab/command.  It stores the frame data
+#         and draws the frames.
+#           - class FrameGenerator is started as a process from a FC, it runs the actual linux command and sends
+#             it back to the FC.
+#       - class EventController is also started as it's own processes and it sends events to the FC. It handles
+#         new frame timing (so that all tabs stay in sync) and keystrokes.
+#################################################################################################################
+
 import os
 import sys
 import subprocess
@@ -55,13 +76,16 @@ MAX_TABS = 99
 HELP_TAB = 90
 
 def process_argparse():
-    # first split all command line args based on -- only
+    """ The main method for processing run arguments. Run watchplus -h for all the details.
+    """
+    # split all command line args based on -- only
     cl_argv_split = split_command_line_argv()
 
-    # get command line commands
+    # get command line command, divide into system args and command argss
     source = "command line"
     cl_system_args, cl_command_args = extract_system_command_args(cl_argv_split, source)
 
+    # if -o (load saved run) do that only
     if cl_system_args.open:
         Settings.load_saved_run = True
         Settings.load_run_file = cl_system_args.open.name
@@ -77,16 +101,22 @@ def process_argparse():
         source = cl_system_args.arg_file.name
         f_system_args, f_command_args = extract_system_command_args(f_argv_split, source)
 
-    # command line system args take precedence over file system args
+    # merge command line and file system args, command line system args take precedence over file system args
     system_args = merge_namespace(f_system_args, cl_system_args)
 
-    # file commands take precedence over command line commands, too confusing otherwise
+    # merge command line and file command args, file commands take precedence over command line commands, too confusing otherwise
     command_args = f_command_args + cl_command_args
 
+    # assign to tabs
     commands_assigned, commands_unassigned = assign_commands_to_tabs(command_args)
 
-    print_commands(commands_assigned, commands_unassigned)
+    # validate args
     validate_args(system_args, commands_assigned)
+
+    # print commands to screen (turned off)
+    print_commands(commands_assigned, commands_unassigned)
+
+    # store in settings
     store_args_in_settings(system_args, commands_assigned, commands_unassigned)
 
 def merge_namespace(first, precedence):
@@ -114,7 +144,8 @@ def split_command_line_argv():
     return argv_split
 
 def extract_system_command_args(argv_split, source):
-    """
+    """ Extract the system and command args and return them as a Namespace object.
+
     :return: system_args = argparse.Namespace
              command_args = [argparse.Namespace,...]
     """
@@ -152,9 +183,9 @@ def read_file_args(arg_file_object):
     return argv_split
 
 def assign_commands_to_tabs(command_args):
-    """
-    :return: [argparse.Namespace,...] note: len = 40, can contain None values throughout because of
-            manual assignment flag
+    """ Assign the commands to tabs, first if there is a -t <num>, then just by order in the list.
+
+    :return: [argparse.Namespace,...] note: can contain None values throughout because of manual -f assignment
     """
     tab_text = {1: '1', 2: '2', 3: '3', 4: '4', 5: '5', 6: '6', 7: '7', 8: '8', 9: '9', 10: '0',
                 11: 'shift-1', 12: 'shift-2', 13: 'shift-3', 14: 'shift-4', 15: 'shift-5', 16: 'shift-6',
@@ -163,7 +194,7 @@ def assign_commands_to_tabs(command_args):
     commands_temp = []
     commands_unassigned = []
 
-    # first assign to tab commands with -t option and put all remaining in commands_temp
+    # assign to tab commands with -t option and put all remaining in commands_temp
     for command in command_args:
         tab = command.tab
         if tab and tab > 0 and tab <= MAX_COMMANDS:
@@ -193,8 +224,8 @@ def assign_commands_to_tabs(command_args):
 
     return commands_assigned, commands_unassigned
 
-def print_commands(commands_assigned, commands_unassigned):
-    if False:
+def print_commands(commands_assigned, commands_unassigned, print_to_screen=False):
+    if print_to_screen:
         for command in commands_assigned:
             if command:
                 print(command.print)
@@ -375,8 +406,9 @@ class Settings(object):
 
     @classmethod
     def __getstate__(cls):
-        # this is needed to pickle class variables. Skip private variables and methods
-        # any variable and methods that should not be including in saved runs should be private with _ in front
+        # picke does not handle class variables. this is needed to pickle class variables. Skip private variables
+        # and methods any variable and methods that should not be including in saved runs should be private
+        # with _ in front
         return {var_name: cls.__dict__[var_name] for var_name in cls.__dict__ if not var_name.startswith("_")}
 
     @classmethod
@@ -416,21 +448,21 @@ class Debug():
 # ======================================================================================================================
 
 class FrameControllers(object):
-    """This is the main controlling class.
+    """ This is the main controlling class.
 
-       Frames are merely the collection of the stdout (or stderr) of the target command or script. If the target
-       command or script is run every second for 10 seconds, 10 frames (outputs) will be generated and stored.
-       Heatmaps are numerical representation for the change state of each character in a frame, it's the highlighting
-       that occurs when a character changes from one frame to the next. See the FrameGenerators class for more details.
+        Frames are merely the collection of the stdout (or stderr) of the target command or script. If the target
+        command or script is run every second for 10 seconds, 10 frames (outputs) will be generated and stored.
+        Heatmaps are numerical representation for the change state of each character in a frame, it's the highlighting
+        that occurs when a character changes from one frame to the next. See the FrameGenerators class for more details.
 
-       This class is utilized inside a multiprocess subprocess, one subprocess for each target command or script.
+        This class is utilized inside a multiprocess subprocess, one subprocess for each target command or script.
 
-       Class data can only be accessed from within the subprocess, multiprocess queues are utilized to share data between
-       processes.
-       """
+        Class data can only be accessed from within the subprocess, multiprocess queues are utilized to share data
+        between processes.
+    """
 
     def __getstate__(self):
-        """ Defines the fields to be included when pickling
+        """ Defines a custom field list to be used when pickling.
 
         :return: instance.__dict__ with only the includes fields
         """
@@ -449,7 +481,7 @@ class FrameControllers(object):
         return {var_name: self.__dict__[var_name] for var_name in self.__dict__ if var_name in includes}
 
     def __setstate__(self, state):
-        """ loads in pickle data, just the fields from __getstate__
+        """ Loads in pickle data, just the fields from __getstate__.
 
         :param state: this is provided by the pickle import
         """
@@ -570,8 +602,8 @@ class FrameControllers(object):
         """ This is the main method that controls storing and drawing frames. First, it spawns a never
             ending generator subprocesses that builds the frames.  The generator sends the data back
             through queues, which is then stored and drawn.
-                generator           --> | event queue  | (let's us know a new frame is available)
-                generator.new_frame --> | frame_queue  | --> self.frame  (the frame itself
+               generator           --> | event queue  | (let's us know a new frame is available)
+               generator.new_frame --> | frame_queue  | --> self.frame  (the frame itself
             """
         try:
             # init settings
@@ -901,8 +933,7 @@ class FrameControllers(object):
         self.draw_live_frame()
 
     def line_wrap_off(self):
-        """
-        handle window moving here, using self.draw_move = +- lines
+        """ Handle window moving here, using self.draw_move = +- lines.
         """
         self.y_top_num_wrapped_lines = 0
         if self.frame_length[self.draw_current] <= self.terminal_draw_height:
@@ -919,13 +950,12 @@ class FrameControllers(object):
         self.draw_move = 0
 
     def line_wrap(self):
-        """
-        Line wrap the frame to display, just the lines in the display range.
-        Line wrapping is very complicated, must take into account glue_bottom, scrolling,
-        terminal resizes, and more.  We could just let curses handle it, but it would only scroll
-        an entire line at a time and not handle glue_bottom.
+        """ Line wrap the frame to display, just the lines in the display range.
+            Line wrapping is very complicated, must take into account glue_bottom, scrolling,
+            terminal resizes, and more.  We could just let curses handle it, but it would only scroll
+            an entire line at a time and not handle glue_bottom.
 
-        Handle window moving here, using self.draw_move = +- lines
+            Handle window moving here, using self.draw_move = +- lines
         """
         draw_current = self.draw_current
         if self.current == self.draw_current:
@@ -1209,26 +1239,22 @@ class FrameControllers(object):
                     with open(run_file, 'ab') as f:
                         pickle.dump(self, f, protocol=2)
             except FileNotFoundError:
-                Debug.debug_to_file(exception)
                 # TODO add failed message, remove started file
                 pass
             except:
                 # TODO add failed message, remove started file
                 pass
-        Debug.debug_to_file("{} {}".format(self.window_id, run_file))
 
         self.system_queue.put(2)
 
 
 class FrameControllersStatic(FrameControllers):
-    """
-    Run or display once and not again. use self.get_output() to control first frame output
+    """ Run or display once and not again. use self.get_output() to control first frame output.
     """
     def init_frame_saved(self):
         # if saved, we need to create all frames manually (typically for help display)
         self.init_frame()
         super(FrameControllersStatic, self).init_frame_saved()
-        Debug.debug_to_file("count: {}".format(Settings.saved_frame_count))
         for count in range(Settings.saved_frame_count):
             self.new_frame_store()
 
@@ -1308,12 +1334,12 @@ class FrameControllersHelp(FrameControllersStatic):
 
 
 class FrameControllersNoChange(FrameControllers):
-    """TODO future home of not recording changes for performance"""
+    """ TODO future home of not recording changes for performance"""
     pass
 
 
 class FrameControllersSavedRun(FrameControllers):
-    """TODO future home of saved runs"""
+    """ TODO future home of saved runs"""
 
     def init_frame(self):
         self.draw_current = len(self.frame_state) - 1
@@ -1490,9 +1516,8 @@ class FrameGenerators(object):
     # Non Streaming Generator starts here ####################
 
     def frame_generator(self):
-        """ a frame is composed of a line by line list of the output from
-            the assigned command for this window """
-
+        """ A frame is composed of a line by line list of the output from the assigned command for this window.
+        """
         self.proc = self.run_command()
 
         safe_margin = .0001
@@ -1725,8 +1750,8 @@ class EventController(object):
             raw_keystroke = self.window.getch()
 
         if raw_keystroke != -1:
-            # to see keystroke codes uncomment this line and tail -f debug on the commond line
-            # Debug.debug_to_file("raw: " + str(raw_keystroke)  )
+            # to see keystroke codes uncomment the follow line and tail -f debug on the commond line
+            # Debug.debug_to_file("raw: {}".format(str(raw_keystroke)))
             pass
 
         if raw_keystroke == curses.KEY_RESIZE:
@@ -1868,7 +1893,7 @@ class EventController(object):
 def new_sleep(stop_time):
     """ Curses sends a SIGWINCH to time.sleep and mp.Queue(timeout=) when the window is resized, which terminates them
         prematurely. To prevent this we must build our own timer. (This will not fix mp.Queue(timeout=))
-        """
+    """
     stop = timeit.default_timer() + stop_time
     while stop >= timeit.default_timer():
         try:
@@ -2009,7 +2034,6 @@ class MainSavedRun(Main):
                     # the instance data will be copied into the new processes
                     frame_controller_seed = pickle.load(run_file, fix_imports=True)
                     Settings.saved_frame_count = len(frame_controller_seed.frame_state) - 1
-                    Debug.debug_to_file("count: {} {}".format(window_id, Settings.saved_frame_count))
                     cls.spawn_frame_controller(window_id, frame_controller_seed)
                     del frame_controller_seed
 
