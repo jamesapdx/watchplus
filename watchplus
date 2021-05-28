@@ -287,7 +287,7 @@ def init_system_parser():
     format_func = lambda prog: argparse.RawTextHelpFormatter(prog, width=terminal_width - 2, max_help_position=32)
     usage = "%(prog)s [-o <f>] | [-f <f>] | [sys options] [cmd options] \"cmd\" [ -- [cmd options] \"cmd\" ]..."
     description = "%(prog)s - a better watch. Featuring pause, rewind and forward, scrolling up and down, line " \
-    "wrapping, multiple tabs running indivudal commands simultaneously, and saving runs. Also supports " \
+    "wrapping, multiple tabs running individual commands simultaneously, and saving runs. Also supports " \
     "streaming commands such as ping and tcpdump."
     epilog = """
 Keys controlling playback and viewing:
@@ -979,10 +979,7 @@ class FrameControllers(object):
             Handle tab movement here, using self.draw_move = +- lines
         """
         draw_current = self.draw_current
-        if self.current == self.draw_current:
-            live = True
-        else:
-            live = False
+        live = True if self.current == self.draw_current else False
         bottom = None
 
         wrapped_lines = []
