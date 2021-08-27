@@ -18,7 +18,7 @@ Watchplus - A better watch. Featuring:
   [![live2](https://github.com/jamesapdx/watchplus/raw/master/screenshots/thumbnails/screenshot_3t.png)](https://github.com/jamesapdx/watchplus/raw/master/screenshots/screenshot_3.png)
   [![paused2](https://github.com/jamesapdx/watchplus/raw/master/screenshots/thumbnails/screenshot_4t.png)](https://github.com/jamesapdx/watchplus/raw/master/screenshots/screenshot_4.png)
 
-Perfect for testing and validation! Run tests, review the results, and email your recordings to the developers. Watch that memory leak grow!
+Perfect for testing and validation! Run tests, review the results, and send your recordings to the developers. Watch that memory leak grow!
 
 Handy for troubleshooting, sometimes you just need to see it in action, and then rewind and see it again!
 
