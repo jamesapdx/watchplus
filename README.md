@@ -1,7 +1,10 @@
 # Watchplus
 A better Linux watch command with advanced features.
 
-[![made-with-python](https://img.shields.io/badge/Made%20with-Python-1f425f.svg)](https://www.python.org/)
+![made-with-python](https://img.shields.io/badge/Made%20with-Python2-yellow)
+![made-with-python](https://img.shields.io/badge/Made%20with-Python3-brightgreen)
+
+[Feature Comparison](#feature-comparison) | [Sample Screenshots](#sample-screenshots) | [Uses](#uses) | [Installation](#installation) | [Startup Usage](#startup-usage) | [Interactive Usage](#interactive-usage)
 
 # Feature Comparison
 |                                                           | **watchplus** | **watch** |
@@ -34,7 +37,7 @@ A better Linux watch command with advanced features.
 
 # Installation
 
-Simply copy `watchplus` to the location of your choice. `watchplus` is a single file, no installation needed.
+Simply copy `watchplus` to the location of your choice. `watchplus` is a single file python script, no installation needed.
 
 # Startup Usage
 Manually specify commands:
