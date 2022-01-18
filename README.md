@@ -44,11 +44,12 @@ Manually specify commands:
 ```python
 watchplus "free -h" -- -b "dmesg" -- -s "ping 1.1.1.1" -- "top -b -n 1"
 ```
-Use a command file:
+Use a command file: ***(sample_command_file is provided in this repo for testing)***
 ```python
 watchplus -f <command_file>
 ```
-**See sample_command_file for more examples**
+
+
 Load a previously saved run:
 ```python
 watchplus -o <run_file>
@@ -75,6 +76,20 @@ Tab/Command options:
 ```
 
 # Interactive Usage
+Common controls:
+```
+   Space ............................... Play | Pause  (does not stop recording)
+   Left | Right Arrows (ctrl, shift) ... 100 | 10 | 1 << >> 1 | 10 | 100  Frames
+   1-0, shift 1-0 ...................... Change tab
+                                         1-0 = tab 1-10, shft-1-0 = tab 11-20
+   Up | Down Arrows .................... Up | Down
+   Page-Up | Page-Down ................. Page up | down
+   g | G ............................... Top | Bottom
+   x ................................... Toggle change history display on/off
+   l ................................... Toggle line wrap
+   ctrl-h .............................. View this help and tab assignments
+```
+All controls:
 ```
 Playback controls (all tabs at once):
    Space ............................... Play | Pause  (does not stop recording)
@@ -98,5 +113,7 @@ Other controls:
    ctrl-w .............................. Write frames and tabs to ~/[date_time].wp
                                          Stops recording during write. Load: -o <f>
    ctrl-h .............................. View this help and tab assignments
-   ctrl-c .............................. Quit
+   ctrl-c | q .......................... Quit
+   
+Note: Simply to move to the bottom of a tab to follow it's output
 ```

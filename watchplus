@@ -313,7 +313,7 @@ Keys controlling playback and viewing:
      ctrl-w .............................. Write frames and tabs to ~/[date_time].wp
                                            Stops recording during write. Load: -o <f>
      ctrl-h .............................. View this help and tab assignments
-     ctrl-c .............................. Quit"""
+     ctrl-c | q .......................... Quit"""
 
     return argparse.ArgumentParser(formatter_class=format_func,
                                    description=description,
