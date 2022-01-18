@@ -6,18 +6,18 @@ A better Linux watch command with advanced features.
 # Feature Comparison
 |                                                           | **watchplus** | **watch** |
 |-----------------------------------------------------------|:-------------:|:---------:|
-| Line wrapping                                             | :heavy_check_mark:       | :heavy_check_mark: |
-| Precise mode                                              | :heavy_check_mark:       | :heavy_check_mark: |
-| Show change history                                       | :heavy_check_mark:       | :heavy_check_mark: |
-| **Multiple tabs running commands simultaneously**         | :heavy_check_mark:       | :x:                |
-| **Pause, rewind and fast-forward.**                       | :heavy_check_mark:       | :x:                |
-| **Scroll up and down with long output**                   | :heavy_check_mark:       | :x:                |
-| **Follow new output, similar to tail -f**                 | :heavy_check_mark:       | :x:                |
-| **Read commonly used commands from a file**               | :heavy_check_mark:       | :x:                |
-| **Save, load, and distribute runs**                       | :heavy_check_mark:       | :x:                |
-| **Support for streaming commands such as ping**           | :heavy_check_mark:       | :x:                |
-| **Interactive commands while running**                    | :heavy_check_mark:       | :x:                |
-| **Extensive use of multiprocessing for minimal overhead** | :heavy_check_mark:       | :x:                |
+| Show change history                                       | :heavy_check_mark:  | :heavy_check_mark: |
+| Line wrapping                                             | :heavy_check_mark:  | :heavy_check_mark: |
+| Precise mode                                              | :heavy_check_mark:  | :heavy_check_mark: |
+| **Multiple tabs running commands simultaneously**         | :heavy_check_mark:  | :x:                |
+| **Pause, rewind and fast-forward**                        | :heavy_check_mark:  | :x:                |
+| **Scroll up and down with long output**                   | :heavy_check_mark:  | :x:                |
+| **Follow new output, similar to tail -f**                 | :heavy_check_mark:  | :x:                |
+| **Read commonly used commands from a file**               | :heavy_check_mark:  | :x:                |
+| **Save, load, and distribute runs**                       | :heavy_check_mark:  | :x:                |
+| **Support for streaming commands such as ping**           | :heavy_check_mark:  | :x:                |
+| **Interactive commands while running**                    | :heavy_check_mark:  | :x:                |
+| **Extensive use of multiprocessing for minimal overhead** | :heavy_check_mark:  | :x:                |
 
 # Sample Screenshots
 
@@ -28,13 +28,13 @@ A better Linux watch command with advanced features.
 
 # Uses 
 
-* Testing and validation: Capture results and bugs and share with developers.
-* Troubleshooting software development: OS issues, Networking, etc. Capture the issue, review it, share it.
-* System monitoring: capture log files, proc files, etc. and review the results any time later.
+* Testing and validation: capture valid results or bugs and share with developers.
+* Troubleshooting software development: watch and rewind your script's output.
+* System monitoring: capture OS issues, networking, log files, proc files, etc.
 
 # Installation
 
-Simply copy `watchplus` to location of your choice. `watchplus` is a single file, no installation needed.
+Simply copy `watchplus` to the location of your choice. `watchplus` is a single file, no installation needed.
 
 # Startup Usage
 Manually specify commands:
@@ -43,14 +43,13 @@ watchplus "free -h" -- -b "dmesg" -- -s "ping 1.1.1.1" -- "top -b -n 1"
 ```
 Use a command file:
 ```python
-watchplus -f <sample_command_file>
+watchplus -f <command_file>
 ```
+**See sample_command_file for more examples**
 Load a previously saved run:
 ```python
 watchplus -o <run_file>
 ```
-**See sample_command_file for more examples**
-
 All command line options:
 ```
 System options (applies to all tabs):
@@ -71,6 +70,7 @@ Tab/Command options:
   "command"               Command to be run, up to 20 allowed, each in in a separate tab.
                           Note: enclose in DOUBLE quotes with inside escaped quotes as needed.
 ```
+
 # Interactive Usage
 ```
 Playback controls (all tabs at once):
