@@ -1,5 +1,5 @@
 # Watchplus
-A better Linux watch command with advanced features.
+Enhanced Linux watch command with lots of cool and useful features.
 
 ![made-with-python](https://img.shields.io/badge/Made%20with-Python2-yellow)
 ![made-with-python](https://img.shields.io/badge/Made%20with-Python3-brightgreen)
